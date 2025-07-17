@@ -1,0 +1,195 @@
+"""
+响应数据模型模块
+
+定义系统中使用的各种响应数据结构，包括流式响应、API响应等。
+"""
+
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Union
+from pydantic import BaseModel, Field
+
+from .enums import (
+    TaskStatus, TaskStatusType, 
+    ResponseType, ResponseTypeType,
+    AgentType, AgentTypeType,
+    WorkflowStage, WorkflowStageType
+)
+
+
+class StreamResponse(BaseModel):
+    """流式响应数据模型"""
+    
+    conversation_id: str = Field(..., description="对话ID")
+    response_type: ResponseTypeType = Field(..., description="响应类型")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+    
+    # 状态信息字段
+    stage: Optional[WorkflowStageType] = Field(None, description="当前阶段")
+    agent_name: Optional[AgentTypeType] = Field(None, description="Agent名称")
+    status: Optional[TaskStatusType] = Field(None, description="任务状态")
+    progress: Optional[float] = Field(None, description="执行进度 (0.0-1.0)")
+    
+    # 内容字段
+    content: Optional[str] = Field(None, description="消息内容")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="附加信息")
+    
+    # 错误字段
+    error_code: Optional[str] = Field(None, description="错误代码")
+    error_message: Optional[str] = Field(None, description="错误消息")
+    
+    class Config:
+        """Pydantic配置"""
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        data = {
+            "conversation_id": self.conversation_id,
+            "response_type": self.response_type,
+            "timestamp": self.timestamp.isoformat()
+        }
+        
+        # 只包含非None的字段
+        for field_name in ["stage", "agent_name", "status", "progress", 
+                          "content", "metadata", "error_code", "error_message"]:
+            value = getattr(self, field_name)
+            if value is not None:
+                data[field_name] = value
+        
+        return data
+    
+    @classmethod
+    def create_status_response(
+        cls,
+        conversation_id: str,
+        stage: WorkflowStageType,
+        agent_name: Optional[AgentTypeType] = None,
+        status: TaskStatusType = "running",
+        progress: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> "StreamResponse":
+        """创建状态响应"""
+        return cls(
+            conversation_id=conversation_id,
+            response_type="status",
+            stage=stage,
+            agent_name=agent_name,
+            status=status,
+            progress=progress,
+            metadata=metadata or {}
+        )
+    
+    @classmethod
+    def create_content_response(
+        cls,
+        conversation_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> "StreamResponse":
+        """创建内容响应"""
+        return cls(
+            conversation_id=conversation_id,
+            response_type="content",
+            content=content,
+            metadata=metadata or {}
+        )
+    
+    @classmethod
+    def create_error_response(
+        cls,
+        conversation_id: str,
+        error_code: str,
+        error_message: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> "StreamResponse":
+        """创建错误响应"""
+        return cls(
+            conversation_id=conversation_id,
+            response_type="error",
+            error_code=error_code,
+            error_message=error_message,
+            metadata=metadata or {}
+        )
+
+
+class APIResponse(BaseModel):
+    """通用API响应数据模型"""
+    
+    success: bool = Field(..., description="是否成功")
+    message: str = Field(..., description="响应消息")
+    data: Optional[Any] = Field(None, description="响应数据")
+    error_code: Optional[str] = Field(None, description="错误代码")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+    
+    class Config:
+        """Pydantic配置"""
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+    
+    @classmethod
+    def success_response(
+        cls,
+        message: str = "操作成功",
+        data: Optional[Any] = None
+    ) -> "APIResponse":
+        """创建成功响应"""
+        return cls(
+            success=True,
+            message=message,
+            data=data
+        )
+    
+    @classmethod
+    def error_response(
+        cls,
+        message: str,
+        error_code: Optional[str] = None,
+        data: Optional[Any] = None
+    ) -> "APIResponse":
+        """创建错误响应"""
+        return cls(
+            success=False,
+            message=message,
+            error_code=error_code,
+            data=data
+        )
+
+
+class HealthCheckResponse(BaseModel):
+    """健康检查响应数据模型"""
+    
+    status: str = Field(..., description="服务状态")
+    version: str = Field(..., description="版本号")
+    timestamp: datetime = Field(default_factory=datetime.now, description="检查时间")
+    services: Dict[str, str] = Field(default_factory=dict, description="依赖服务状态")
+    
+    class Config:
+        """Pydantic配置"""
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class SearchResult(BaseModel):
+    """搜索结果数据模型"""
+    
+    title: str = Field(..., description="标题")
+    content: str = Field(..., description="内容")
+    url: Optional[str] = Field(None, description="链接")
+    score: Optional[float] = Field(None, description="相关性分数")
+    source: str = Field(..., description="来源")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            "title": self.title,
+            "content": self.content,
+            "url": self.url,
+            "score": self.score,
+            "source": self.source,
+            "metadata": self.metadata
+        }

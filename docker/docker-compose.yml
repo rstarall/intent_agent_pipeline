@@ -1,0 +1,125 @@
+# 化妆品知识库问答机器人Pipeline项目 Docker Compose 配置
+
+version: '3.8'
+
+services:
+  # 主应用服务
+  intent-agent-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: intent-agent-pipeline
+    ports:
+      - "8000:8000"
+    environment:
+      # 应用配置
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=info
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      
+      # OpenAI配置
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      
+      # 知识库配置
+      - KNOWLEDGE_API_URL=${KNOWLEDGE_API_URL:-http://localhost:8001/api/knowledge_search}
+      - KNOWLEDGE_API_KEY=${KNOWLEDGE_API_KEY}
+      
+      # LightRAG配置
+      - LIGHTRAG_API_URL=${LIGHTRAG_API_URL:-http://localhost:8002/api/lightrag}
+      - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY}
+      
+      # 搜索引擎配置
+      - SEARCH_ENGINE_API_KEY=${SEARCH_ENGINE_API_KEY}
+      - SEARCH_ENGINE_URL=${SEARCH_ENGINE_URL:-https://api.search.com}
+      
+      # Redis配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      
+
+      
+      # 性能配置
+      - MAX_WORKERS=10
+      - REQUEST_TIMEOUT=30
+      - STREAM_CHUNK_SIZE=1024
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - intent-agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis服务
+  redis:
+    image: redis:7-alpine
+    container_name: intent-agent-redis
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: >
+      sh -c "
+        if [ -n \"$$REDIS_PASSWORD\" ]; then
+          redis-server --requirepass $$REDIS_PASSWORD
+        else
+          redis-server
+        fi
+      "
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - intent-agent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+
+  # Nginx反向代理（可选）
+  nginx:
+    image: nginx:alpine
+    container_name: intent-agent-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - intent-agent-pipeline
+    restart: unless-stopped
+    networks:
+      - intent-agent-network
+    profiles:
+      - with-nginx
+
+# 网络配置
+networks:
+  intent-agent-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 数据卷配置
+volumes:
+  redis_data:
+    driver: local
+
