@@ -56,6 +56,30 @@ class LLMService:
             str: LLM响应内容
         """
         try:
+            # 检查配置
+            if not self.settings.openai_api_key:
+                # 尝试从环境变量获取
+                import os
+                # 如果使用OpenRouter，优先尝试OPENROUTER_API_KEY
+                if "openrouter.ai" in self.settings.openai_base_url:
+                    api_key = os.getenv('OPENROUTER_API_KEY') or os.getenv('OPENAI_API_KEY')
+                else:
+                    api_key = os.getenv('OPENAI_API_KEY')
+                if not api_key:
+                    raise ValueError("未配置OpenAI API密钥")
+                self.settings.openai_api_key = api_key
+            
+            if not self.settings.openai_base_url:
+                raise ValueError("未配置OpenAI Base URL")
+            
+            # 调试信息：显示 API key 和 base URL
+            self.logger.info(
+                "OpenAI API 配置信息",
+                api_key_prefix=self.settings.openai_api_key[:12] + "..." if self.settings.openai_api_key else "None",
+                base_url=self.settings.openai_base_url,
+                model=self.settings.openai_model
+            )
+            
             # 构建消息列表
             messages = []
             
@@ -86,6 +110,14 @@ class LLMService:
                 "Content-Type": "application/json"
             }
             
+            self.logger.info(
+                "发送LLM请求",
+                url=f"{self.settings.openai_base_url}/chat/completions",
+                model=self.settings.openai_model,
+                prompt_length=len(prompt),
+                request_headers={"Authorization": f"Bearer {self.settings.openai_api_key[:12]}...", "Content-Type": "application/json"}
+            )
+            
             async with session.post(
                 f"{self.settings.openai_base_url}/chat/completions",
                 headers=headers,
@@ -94,10 +126,30 @@ class LLMService:
                 
                 if response.status != 200:
                     error_text = await response.text()
+                    self.logger.error(
+                        f"OpenAI API错误 {response.status}: {error_text}",
+                        extra={
+                            "status_code": response.status,
+                            "response_text": error_text,
+                            "url": f"{self.settings.openai_base_url}/chat/completions",
+                            "api_key_prefix": self.settings.openai_api_key[:12] + "..." if self.settings.openai_api_key else "None",
+                            "request_data": {k: v for k, v in request_data.items() if k != "messages"}
+                        }
+                    )
                     raise Exception(f"OpenAI API错误 {response.status}: {error_text}")
                 
                 result = await response.json()
+                
+                # 检查响应格式
+                if "choices" not in result or not result["choices"]:
+                    raise Exception(f"无效的OpenAI响应格式: {result}")
+                
                 content = result["choices"][0]["message"]["content"]
+                
+                # 检查内容
+                if not content:
+                    self.logger.warning("收到空的LLM响应")
+                    return "抱歉，我目前无法为您提供回答。请稍后再试。"
                 
                 self.logger.info(
                     "LLM响应生成成功",
@@ -115,10 +167,12 @@ class LLMService:
                 {
                     "prompt_length": len(prompt),
                     "temperature": temperature,
-                    "model": self.settings.openai_model
+                    "model": self.settings.openai_model,
+                    "openai_base_url": self.settings.openai_base_url
                 }
             )
-            raise
+            # 返回错误消息而不是抛出异常
+            return f"抱歉，在生成响应时遇到了问题：{str(e)}"
     
     async def generate_stream_response(
         self,
@@ -182,7 +236,7 @@ class LLMService:
                 
                 # 处理流式响应
                 async for line in response.content:
-                    line = line.decode('utf-8').strip()
+                    line = line.decode('utf-8', errors='ignore').strip()
                     
                     if line.startswith('data: '):
                         data = line[6:]  # 移除 'data: ' 前缀

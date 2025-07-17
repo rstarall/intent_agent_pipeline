@@ -63,9 +63,9 @@ class TestLLMService:
         
         # 模拟流式数据
         stream_data = [
-            b'data: {"choices": [{"delta": {"content": "测试"}}]}\n\n',
-            b'data: {"choices": [{"delta": {"content": "流式"}}]}\n\n',
-            b'data: {"choices": [{"delta": {"content": "响应"}}]}\n\n',
+            'data: {"choices": [{"delta": {"content": "测试"}}]}\n\n'.encode('utf-8'),
+            'data: {"choices": [{"delta": {"content": "流式"}}]}\n\n'.encode('utf-8'),
+            'data: {"choices": [{"delta": {"content": "响应"}}]}\n\n'.encode('utf-8'),
             b'data: [DONE]\n\n'
         ]
         

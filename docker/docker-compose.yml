@@ -90,8 +90,6 @@ services:
       timeout: 10s
       retries: 3
 
-
-
   # Nginx反向代理（可选）
   nginx:
     image: nginx:alpine
@@ -114,9 +112,6 @@ services:
 networks:
   intent-agent-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
 
 # 数据卷配置
 volumes:

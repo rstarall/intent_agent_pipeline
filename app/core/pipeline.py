@@ -26,39 +26,53 @@ class PipelineInterface:
         self.logger = get_logger("PipelineInterface")
         self.active_conversations: Dict[str, BaseConversationTask] = {}
     
-    def create_conversation(self, user_id: str, mode: ExecutionModeType = "workflow") -> str:
+    def create_conversation(
+        self,
+        user_id: str,
+        mode: ExecutionModeType = "workflow",
+        conversation_id: Optional[str] = None
+    ) -> str:
         """
         创建新对话会话
         
         Args:
             user_id: 用户ID
             mode: 执行模式 ("workflow" 或 "agent")
+            conversation_id: 可选的对话ID，如果提供则使用该ID，否则自动生成
             
         Returns:
             conversation_id: 对话唯一标识
         """
-        conversation_id = str(uuid.uuid4())
+        # 使用提供的conversation_id或生成新的
+        if conversation_id:
+            # 检查conversation_id是否已存在
+            if conversation_id in self.active_conversations:
+                raise ValueError(f"对话ID已存在: {conversation_id}")
+            final_conversation_id = conversation_id
+        else:
+            final_conversation_id = str(uuid.uuid4())
         
         try:
             # 根据模式创建对应的任务实例
             if mode == "workflow":
-                task = WorkflowTask(user_id, conversation_id)
+                task = WorkflowTask(user_id, final_conversation_id)
             elif mode == "agent":
-                task = AgentTask(user_id, conversation_id)
+                task = AgentTask(user_id, final_conversation_id)
             else:
                 raise ValueError(f"不支持的执行模式: {mode}")
             
             # 保存到活跃对话字典
-            self.active_conversations[conversation_id] = task
+            self.active_conversations[final_conversation_id] = task
             
             self.logger.info(
                 "创建新对话会话",
-                conversation_id=conversation_id,
+                conversation_id=final_conversation_id,
                 user_id=user_id,
-                mode=mode
+                mode=mode,
+                is_custom_id=conversation_id is not None
             )
             
-            return conversation_id
+            return final_conversation_id
             
         except Exception as e:
             self.logger.error_with_context(
@@ -66,7 +80,8 @@ class PipelineInterface:
                 {
                     "user_id": user_id,
                     "mode": mode,
-                    "conversation_id": conversation_id
+                    "conversation_id": final_conversation_id,
+                    "provided_conversation_id": conversation_id
                 }
             )
             raise

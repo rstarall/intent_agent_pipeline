@@ -42,6 +42,8 @@ class StreamResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+        # 确保正确的UTF-8编码
+        validate_assignment = True
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式，符合intent_pipeline.py期望的结构"""
@@ -75,13 +77,22 @@ class StreamResponse(BaseModel):
     def _get_status_description(self) -> str:
         """获取状态描述"""
         if self.stage:
+            # 与intent_pipeline.py中的STATUS_MESSAGES匹配
             stage_descriptions = {
-                "initialization": "正在初始化...",
+                "initialization": "正在初始化对话...",
+                "analyzing_question": "正在分析问题...",
+                "task_scheduling": "正在调度任务...",
+                "executing_tasks": "正在执行任务...",
                 "online_search": "正在进行联网搜索...",
                 "knowledge_search": "正在搜索知识库...",
                 "lightrag_query": "正在进行LightRAG查询...",
                 "response_generation": "正在生成响应...",
-                "completed": "处理完成"
+                "generating_answer": "正在生成答案...",
+                "completed": "处理完成",
+                "processing": "正在处理您的问题...",
+                "streaming": "正在获取流式响应...",
+                "agent_workflow": "正在执行Agent工作流...",
+                "error": "处理过程中出现错误"
             }
             return stage_descriptions.get(self.stage, f"当前阶段: {self.stage}")
         return "正在处理..."

@@ -1,7 +1,7 @@
 """
 Agent任务类模块
 
-实现基于LangGraph的智能代理对话任务。
+实现基于LangGraph的智能代理对话任务，支持流式响应。
 """
 
 from typing import Dict, List, Optional, Any, AsyncIterator
@@ -10,15 +10,19 @@ from datetime import datetime
 from .base_task import BaseConversationTask
 from ..models import Message, GlobalContext
 from ..langgraph import LangGraphManager
+from ..services import LLMService
 from ..config import get_logger
 
 
 class AgentTask(BaseConversationTask):
-    """智能代理对话任务"""
+    """智能代理对话任务（支持流式响应）"""
     
     def __init__(self, user_id: str, conversation_id: Optional[str] = None):
         """初始化Agent任务"""
         super().__init__(user_id, conversation_id, mode="agent")
+        
+        # 初始化服务
+        self.llm_service = LLMService()
         
         # 初始化LangGraph管理器
         self.langgraph_manager = LangGraphManager()
@@ -29,6 +33,55 @@ class AgentTask(BaseConversationTask):
         # Agent执行状态
         self.current_agent = ""
         self.execution_steps: List[Dict[str, Any]] = []
+        
+        # Workflow完成状态标识
+        self.workflow_completed = False
+        self.final_answer_sent = False
+    
+    async def _generate_with_stream(
+        self,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        system_message: Optional[str] = None,
+        stage_name: str = ""
+    ) -> str:
+        """
+        使用流式响应生成LLM回复，同时收集完整响应用于后续处理
+        
+        Args:
+            prompt: 提示词
+            temperature: 温度参数
+            max_tokens: 最大令牌数
+            system_message: 系统消息
+            stage_name: 阶段名称（用于日志）
+            
+        Returns:
+            完整的LLM响应内容
+        """
+        full_response = ""
+        
+        self.logger.info(f"开始{stage_name}流式响应", conversation_id=self.conversation_id)
+        
+        # 使用流式响应
+        async for chunk in self.llm_service.generate_stream_response(
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_message=system_message,
+            conversation_history=self.history.get_recent_messages(limit=5)
+        ):
+            # 实时发送内容片段给用户
+            await self.emit_content(chunk)
+            
+            # 收集完整响应
+            full_response += chunk
+        
+        self.logger.info(f"完成{stage_name}流式响应", 
+                        conversation_id=self.conversation_id,
+                        response_length=len(full_response))
+        
+        return full_response
     
     async def execute(self) -> None:
         """执行Agent工作流的主要逻辑"""
@@ -44,8 +97,8 @@ class AgentTask(BaseConversationTask):
             self.global_context.user_question = user_question
             self.global_context.conversation_history = self.history.messages
             
-            # 执行LangGraph工作流
-            await self._execute_agent_workflow()
+            # 执行LangGraph工作流（流式版本）
+            await self._execute_agent_workflow_with_stream()
             
         except Exception as e:
             self.logger.error_with_context(
@@ -56,54 +109,191 @@ class AgentTask(BaseConversationTask):
                     "user_id": self.user_id
                 }
             )
+            await self.emit_error("AGENT_EXECUTION_ERROR", f"Agent执行错误: {str(e)}")
             raise
     
-    async def _execute_agent_workflow(self) -> None:
-        """执行Agent工作流"""
-        self.update_stage("agent_workflow")
-        await self.emit_status("agent_workflow", progress=0.1)
-        await self.emit_content("启动智能代理工作流...")
-        
-        # 准备LangGraph状态
-        initial_state = {
-            "user_question": self.global_context.user_question,
-            "conversation_history": [msg.to_dict() for msg in self.global_context.conversation_history],
-            "online_search_results": [],
-            "knowledge_search_results": [],
-            "lightrag_results": [],
-            "current_stage": "master_agent",
-            "final_answer": "",
-            "metadata": {
-                "conversation_id": self.conversation_id,
-                "user_id": self.user_id,
-                "start_time": datetime.now().isoformat()
-            }
-        }
-        
-        # 执行LangGraph工作流
-        config = {
-            "configurable": {
-                "thread_id": self.conversation_id,
-                "checkpoint_ns": f"agent_task_{self.conversation_id}"
-            }
-        }
-        
+    async def _execute_agent_workflow_with_stream(self) -> None:
+        """执行Agent工作流（流式版本）"""
         try:
-            # 流式执行LangGraph
-            async for chunk in self.langgraph_manager.stream_workflow(initial_state, config):
-                await self._process_langgraph_chunk(chunk)
+            # 阶段1：问题理解与分析
+            await self._agent_stage_understand_question()
             
-            # 获取最终状态
-            final_state = await self.langgraph_manager.get_final_state(config)
-            await self._process_final_result(final_state)
+            # 阶段2：任务规划
+            await self._agent_stage_plan_tasks()
+            
+            # 阶段3：执行任务
+            await self._agent_stage_execute_tasks()
+            
+            # 阶段4：结果整合
+            await self._agent_stage_integrate_results()
             
         except Exception as e:
-            self.logger.error(f"LangGraph执行失败: {str(e)}")
-            await self.emit_error(
-                error_code="LANGGRAPH_ERROR",
-                error_message=f"智能代理执行失败: {str(e)}"
-            )
+            self.logger.error_with_context(e, {"stage": "agent_workflow"})
             raise
+    
+    async def _agent_stage_understand_question(self) -> None:
+        """Agent阶段1：问题理解与分析"""
+        self.update_stage("understanding_question")
+        self.current_agent = "QuestionAnalyzer"
+        await self.emit_status("understanding_question", progress=0.1)
+        
+        user_question = self.global_context.user_question
+        
+        # 构建问题分析提示
+        analyze_prompt = f"""
+        作为一个智能问答助手，我需要深入理解用户的问题。
+        
+        用户问题：{user_question}
+        
+        请分析这个问题的：
+        1. 核心意图是什么？
+        2. 问题的复杂程度如何？
+        3. 需要哪些类型的信息来回答？
+        4. 是否需要实时信息？
+        5. 问题的关键词和概念
+        
+        请提供详细的分析思路：
+        """
+        
+        await self.emit_content("🤖 **QuestionAnalyzer**: 正在分析问题...")
+        
+        # 使用流式响应进行问题分析
+        analysis_result = await self._generate_with_stream(
+            analyze_prompt,
+            temperature=0.3,
+            stage_name="问题分析"
+        )
+        
+        # 保存分析结果到全局上下文
+        self.global_context.question_analysis = analysis_result
+        
+        await self.emit_status("understanding_question", status="completed", progress=0.25)
+    
+    async def _agent_stage_plan_tasks(self) -> None:
+        """Agent阶段2：任务规划"""
+        self.update_stage("planning_tasks")
+        self.current_agent = "TaskPlanner"
+        await self.emit_status("planning_tasks", progress=0.3)
+        
+        # 构建任务规划提示
+        plan_prompt = f"""
+        基于问题分析，制定解决方案。
+        
+        问题分析结果：
+        {self.global_context.question_analysis}
+        
+        请制定一个详细的执行计划：
+        1. 需要执行哪些具体任务？
+        2. 任务的优先级和依赖关系？
+        3. 每个任务的预期输出？
+        4. 整体的解决思路？
+        
+        请详细说明执行策略：
+        """
+        
+        await self.emit_content("\n🗂️ **TaskPlanner**: 正在制定执行计划...")
+        
+        # 使用流式响应进行任务规划
+        planning_result = await self._generate_with_stream(
+            plan_prompt,
+            temperature=0.4,
+            stage_name="任务规划"
+        )
+        
+        # 保存规划结果
+        self.global_context.task_plan = planning_result
+        
+        await self.emit_status("planning_tasks", status="completed", progress=0.5)
+    
+    async def _agent_stage_execute_tasks(self) -> None:
+        """Agent阶段3：执行任务"""
+        self.update_stage("executing_tasks")
+        self.current_agent = "TaskExecutor"
+        await self.emit_status("executing_tasks", progress=0.6)
+        
+        # 构建任务执行提示
+        execute_prompt = f"""
+        现在开始执行任务。
+        
+        原始问题：{self.global_context.user_question}
+        问题分析：{self.global_context.question_analysis}
+        执行计划：{self.global_context.task_plan}
+        
+        请按照计划执行任务，并提供：
+        1. 每个任务的执行过程
+        2. 发现的关键信息
+        3. 遇到的问题和解决方案
+        4. 中间结果和思考过程
+        
+        请详细展示执行过程：
+        """
+        
+        await self.emit_content("\n⚙️ **TaskExecutor**: 正在执行任务...")
+        
+        # 使用流式响应执行任务
+        execution_result = await self._generate_with_stream(
+            execute_prompt,
+            temperature=0.6,
+            stage_name="任务执行"
+        )
+        
+        # 保存执行结果
+        self.global_context.execution_results = execution_result
+        
+        await self.emit_status("executing_tasks", status="completed", progress=0.8)
+    
+    async def _agent_stage_integrate_results(self) -> None:
+        """Agent阶段4：结果整合"""
+        self.update_stage("integrating_results")
+        self.current_agent = "ResultIntegrator"
+        await self.emit_status("integrating_results", progress=0.9)
+        
+        # 构建结果整合提示
+        integrate_prompt = f"""
+        现在需要整合所有信息，为用户提供最终答案。
+        
+        原始问题：{self.global_context.user_question}
+        问题分析：{self.global_context.question_analysis}
+        执行计划：{self.global_context.task_plan}
+        执行结果：{self.global_context.execution_results}
+        
+        请基于以上信息，生成一个：
+        1. 直接回答用户问题的答案
+        2. 逻辑清晰、结构完整
+        3. 包含必要的解释和依据
+        4. 如果信息不足，请明确说明
+        
+        最终答案：
+        """
+        
+        await self.emit_content("\n🔄 **ResultIntegrator**: 正在整合结果...")
+        
+        # 使用流式响应生成最终答案
+        final_answer = await self._generate_with_stream(
+            integrate_prompt,
+            temperature=0.7,
+            stage_name="结果整合"
+        )
+        
+        # 保存最终答案
+        self.global_context.final_answer = final_answer
+        
+        # 添加到历史记录
+        assistant_message = Message(
+            role="assistant",
+            content=final_answer,
+            metadata={
+                "mode": "agent",
+                "stages": ["understanding", "planning", "executing", "integrating"]
+            }
+        )
+        self.history.add_message(assistant_message)
+        
+        await self.emit_content("\n✅ **任务完成**")
+        await self.emit_status("integrating_results", status="completed", progress=1.0)
+        
+        self.workflow_completed = True
+        self.final_answer_sent = True
     
     async def _process_langgraph_chunk(self, chunk: Dict[str, Any]) -> None:
         """处理LangGraph流式输出块"""
@@ -200,7 +390,7 @@ class AgentTask(BaseConversationTask):
         """处理最终输出Agent输出"""
         final_answer = output.get("final_answer", "")
         
-        if final_answer:
+        if final_answer and not self.final_answer_sent:
             # 添加助手回答到历史
             assistant_message = Message(
                 role="assistant",
@@ -213,15 +403,32 @@ class AgentTask(BaseConversationTask):
             )
             self.add_message(assistant_message)
             
+            # 发送最终答案
             await self.emit_content(final_answer)
+            self.final_answer_sent = True
+            
+            # 标记workflow完成
+            self.workflow_completed = True
+            
+            # 发送完成状态
+            await self.emit_status(
+                "final_output_completed",
+                status="completed", 
+                progress=1.0,
+                metadata={
+                    "final_answer_length": len(final_answer),
+                    "total_steps": len(self.execution_steps)
+                }
+            )
     
     async def _process_final_result(self, final_state: Dict[str, Any]) -> None:
         """处理最终结果"""
         try:
             final_answer = final_state.get("final_answer", "")
             
-            if final_answer and not any(msg.role == "assistant" for msg in self.history.messages[-1:]):
-                # 如果还没有添加最终回答，则添加
+            # 如果还没有发送最终答案，则处理
+            if final_answer and not self.final_answer_sent:
+                # 添加助手回答到历史
                 assistant_message = Message(
                     role="assistant",
                     content=final_answer,
@@ -232,14 +439,32 @@ class AgentTask(BaseConversationTask):
                     }
                 )
                 self.add_message(assistant_message)
+                
+                # 发送最终答案
+                await self.emit_content(final_answer)
+                self.final_answer_sent = True
             
-            await self.emit_status("agent_workflow", status="completed", progress=1.0)
+            # 标记workflow完成
+            self.workflow_completed = True
+            
+            # 发送最终完成状态
+            await self.emit_status(
+                "agent_workflow", 
+                status="completed", 
+                progress=1.0,
+                metadata={
+                    "workflow_completed": True,
+                    "final_answer_length": len(final_answer),
+                    "total_execution_steps": len(self.execution_steps)
+                }
+            )
             
             self.logger.info(
                 "Agent工作流执行完成",
                 conversation_id=self.conversation_id,
                 execution_steps=len(self.execution_steps),
-                final_answer_length=len(final_answer)
+                final_answer_length=len(final_answer),
+                workflow_completed=self.workflow_completed
             )
             
         except Exception as e:

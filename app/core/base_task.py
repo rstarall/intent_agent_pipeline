@@ -53,6 +53,10 @@ class BaseConversationTask(ABC):
         # 流式响应队列
         self._response_queue: asyncio.Queue = asyncio.Queue()
         self._is_streaming = False
+        
+        # 任务执行完成标志
+        self._task_completed = False
+        self._task_error = None
     
     def add_message(self, message: Message) -> None:
         """添加消息到历史记录"""
@@ -152,51 +156,72 @@ class BaseConversationTask(ABC):
     async def stream_response(self, user_token: Optional[str] = None) -> AsyncIterator[StreamResponse]:
         """流式返回状态和消息内容"""
         self._is_streaming = True
+        self._task_completed = False
+        self._task_error = None
         
         # 保存用户token以供子类使用
         self.user_token = user_token
         
         try:
+            print(f"[DEBUG] 开始流式响应: {self.conversation_id}")
+            
             # 启动任务执行
             execution_task = asyncio.create_task(self._execute_task())
             
-            # 流式返回响应
-            while True:
+            # 简化的流式响应处理
+            while not self._task_completed:
                 try:
-                    # 等待响应或任务完成
-                    done, pending = await asyncio.wait(
-                        [
-                            asyncio.create_task(self._response_queue.get()),
-                            execution_task
-                        ],
-                        return_when=asyncio.FIRST_COMPLETED,
-                        timeout=1.0
-                    )
-                    
-                    if execution_task in done:
-                        # 任务执行完成，处理剩余响应
-                        while not self._response_queue.empty():
-                            response = await self._response_queue.get()
-                            yield response
-                        break
-                    
-                    if done:
-                        # 有新响应
-                        for task in done:
-                            if task != execution_task:
-                                response = await task
-                                yield response
-                    
-                    # 取消未完成的任务
-                    for task in pending:
-                        task.cancel()
-                        
-                except asyncio.TimeoutError:
-                    # 超时检查任务是否完成
-                    if execution_task.done():
-                        break
-                    continue
-                    
+                    # 等待响应队列中的数据，设置较短的超时
+                    try:
+                        response = await asyncio.wait_for(
+                            self._response_queue.get(),
+                            timeout=0.5
+                        )
+                        print(f"[DEBUG] 发送响应: {response.response_type}")
+                        yield response
+                    except asyncio.TimeoutError:
+                        # 超时检查任务状态
+                        if execution_task.done():
+                            print(f"[DEBUG] 任务执行完成")
+                            self._task_completed = True
+                            
+                            # 检查任务是否有异常
+                            if execution_task.exception():
+                                self._task_error = execution_task.exception()
+                                print(f"[DEBUG] 任务执行异常: {self._task_error}")
+                            
+                            # 处理剩余的响应
+                            while not self._response_queue.empty():
+                                try:
+                                    response = await asyncio.wait_for(
+                                        self._response_queue.get(),
+                                        timeout=0.1
+                                    )
+                                    yield response
+                                except asyncio.TimeoutError:
+                                    break
+                            
+                            break
+                        else:
+                            # 任务还在运行，继续等待
+                            continue
+                            
+                except Exception as e:
+                    print(f"[DEBUG] 处理响应时出错: {str(e)}")
+                    self.logger.error(f"处理响应时出错: {str(e)}")
+                    break
+            
+            # 如果任务有错误，发送错误响应
+            if self._task_error:
+                error_response = StreamResponse.create_error_response(
+                    conversation_id=self.conversation_id,
+                    error_code="EXECUTION_ERROR",
+                    error_message=f"任务执行失败: {str(self._task_error)}"
+                )
+                yield error_response
+            
+            print(f"[DEBUG] 流式响应完成: {self.conversation_id}")
+            
         except Exception as e:
             self.logger.error_with_context(
                 e,
@@ -206,24 +231,33 @@ class BaseConversationTask(ABC):
                     "status": self.status
                 }
             )
+            print(f"[DEBUG] 流式响应异常: {str(e)}")
             
-            await self.emit_error(
+            # 发送错误响应
+            error_response = StreamResponse.create_error_response(
+                conversation_id=self.conversation_id,
                 error_code="STREAM_ERROR",
                 error_message=f"流式响应错误: {str(e)}"
             )
+            yield error_response
             
         finally:
             self._is_streaming = False
+            print(f"[DEBUG] 流式响应结束: {self.conversation_id}")
     
     async def _execute_task(self) -> None:
         """执行任务的内部方法"""
         try:
+            print(f"[DEBUG] 开始执行任务: {self.conversation_id}")
             self.update_status("running")
             await self.execute()
             self.update_status("completed")
+            print(f"[DEBUG] 任务执行完成: {self.conversation_id}")
             
         except Exception as e:
             self.update_status("error")
+            self._task_error = e
+            print(f"[DEBUG] 任务执行出错: {str(e)}")
             self.logger.error_with_context(
                 e,
                 {
@@ -232,10 +266,14 @@ class BaseConversationTask(ABC):
                 }
             )
             
+            # 发送错误信息
             await self.emit_error(
                 error_code="EXECUTION_ERROR",
                 error_message=f"任务执行错误: {str(e)}"
             )
+        finally:
+            self._task_completed = True
+            print(f"[DEBUG] 任务标记为完成: {self.conversation_id}")
     
     @abstractmethod
     async def execute(self) -> None:
@@ -245,9 +283,9 @@ class BaseConversationTask(ABC):
         子类必须实现此方法来定义具体的执行逻辑。
         """
         pass
-    
+
     def get_conversation_summary(self) -> Dict[str, Any]:
-        """获取对话摘要信息"""
+        """获取对话摘要"""
         return {
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,

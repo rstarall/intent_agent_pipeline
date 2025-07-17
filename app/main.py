@@ -5,11 +5,17 @@ FastAPI应用主入口
 """
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+
+# 确保UTF-8编码
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+os.environ.setdefault('LANG', 'C.UTF-8')
+os.environ.setdefault('LC_ALL', 'C.UTF-8')
 
 from .config import setup_logging, get_settings, get_logger
 from .core import PipelineInterface

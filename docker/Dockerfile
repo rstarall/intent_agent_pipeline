@@ -20,9 +20,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 创建非root用户
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
 # 复制requirements文件
 COPY requirements.txt requirements-dev.txt ./
 
@@ -31,19 +28,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY app/ ./app/
-COPY .env.example ./.env
 
-# 创建日志目录
-RUN mkdir -p logs && chown -R appuser:appuser logs
+# 复制环境变量文件（如果存在）
+COPY .env* ./
 
-# 创建数据目录
-RUN mkdir -p data && chown -R appuser:appuser data
+# 创建日志目录并设置权限
+RUN mkdir -p /app/logs && chmod 777 /app/logs
 
-# 设置文件权限
-RUN chown -R appuser:appuser /app
-
-# 切换到非root用户
-USER appuser
+# 创建数据目录并设置权限
+RUN mkdir -p /app/data && chmod 777 /app/data
 
 # 暴露端口
 EXPOSE 8000

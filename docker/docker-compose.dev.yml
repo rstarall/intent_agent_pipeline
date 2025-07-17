@@ -20,29 +20,28 @@ services:
       - API_PORT=8000
       
       # OpenAI配置
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-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}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
       
       # 知识库配置
-      - KNOWLEDGE_API_URL=${KNOWLEDGE_API_URL:-http://localhost:8001/api/knowledge_search}
+      - KNOWLEDGE_API_URL=${KNOWLEDGE_API_URL:-http://117.50.252.245:3000}
       - KNOWLEDGE_API_KEY=${KNOWLEDGE_API_KEY}
       
       # LightRAG配置
-      - LIGHTRAG_API_URL=${LIGHTRAG_API_URL:-http://localhost:8002/api/lightrag}
+      - LIGHTRAG_API_URL=${LIGHTRAG_API_URL:-http://117.50.252.245:9621}
       - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY}
       
       # 搜索引擎配置
       - SEARCH_ENGINE_API_KEY=${SEARCH_ENGINE_API_KEY}
-      - SEARCH_ENGINE_URL=${SEARCH_ENGINE_URL:-https://api.search.com}
+      - SEARCH_ENGINE_URL=${SEARCH_ENGINE_URL:-http://117.50.252.245:8081}
       
       # Redis配置
       - REDIS_HOST=redis-dev
       - REDIS_PORT=6379
       - REDIS_DB=0
       - REDIS_PASSWORD=
-      
-
       
       # 性能配置
       - MAX_WORKERS=5
@@ -74,19 +73,10 @@ services:
       - intent-agent-dev-network
     command: redis-server --appendonly yes
 
-
-
-
-
-
-
 # 网络配置
 networks:
   intent-agent-dev-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.21.0.0/16
 
 # 数据卷配置
 volumes:

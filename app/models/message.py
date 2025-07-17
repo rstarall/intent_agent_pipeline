@@ -103,6 +103,7 @@ class CreateConversationRequest(BaseModel):
     
     user_id: str = Field(..., description="用户ID")
     mode: str = Field(default="workflow", description="执行模式")
+    conversation_id: Optional[str] = Field(None, description="可选的对话ID，如果提供则使用该ID，否则自动生成")
     
     # 支持从request body中获取用户信息
     user: Optional[Dict[str, Any]] = Field(None, description="用户信息，包含token等")

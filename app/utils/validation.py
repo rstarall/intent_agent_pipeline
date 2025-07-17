@@ -305,6 +305,10 @@ class RequestValidator:
         # 验证字段
         Validator.validate_user_id(data["user_id"])
         
+        # 验证可选的conversation_id
+        if "conversation_id" in data and data["conversation_id"]:
+            Validator.validate_conversation_id(data["conversation_id"])
+        
         if "mode" in data:
             Validator.validate_execution_mode(data["mode"])
         else:

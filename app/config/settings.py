@@ -6,7 +6,8 @@
 
 import os
 from typing import Optional, List
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, description="API端口")
     
     # OpenAI配置
-    openai_api_key: str = Field(..., description="OpenAI API密钥")
+    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API密钥")
     openai_base_url: str = Field(default="https://api.openai.com/v1", description="OpenAI API基础URL")
     openai_model: str = Field(default="gpt-4", description="OpenAI模型")
     openai_temperature: float = Field(default=0.7, description="OpenAI温度参数")
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     knowledge_timeout: int = Field(default=30, description="知识库请求超时时间")
     
     # Open WebUI配置
-    openwebui_base_url: str = Field(default="http://localhost:8080", description="Open WebUI基础URL")
+    openwebui_base_url: str = Field(default="http://localhost:3000", description="Open WebUI基础URL")
     
     # LightRAG配置
     lightrag_api_url: str = Field(default="http://localhost:8001/api/lightrag", description="LightRAG API URL")
@@ -72,7 +73,7 @@ class Settings(BaseSettings):
     cors_methods: List[str] = Field(default=["*"], description="CORS允许的方法")
     cors_headers: List[str] = Field(default=["*"], description="CORS允许的头部")
     
-    @validator("log_level")
+    @field_validator("log_level")
     def validate_log_level(cls, v):
         """验证日志级别"""
         valid_levels = ["debug", "info", "warning", "error", "critical"]
@@ -80,7 +81,7 @@ class Settings(BaseSettings):
             raise ValueError(f"日志级别必须是以下之一: {valid_levels}")
         return v.lower()
     
-    @validator("environment")
+    @field_validator("environment")
     def validate_environment(cls, v):
         """验证运行环境"""
         valid_envs = ["development", "testing", "staging", "production"]
@@ -88,7 +89,7 @@ class Settings(BaseSettings):
             raise ValueError(f"运行环境必须是以下之一: {valid_envs}")
         return v.lower()
     
-    @validator("openai_temperature")
+    @field_validator("openai_temperature")
     def validate_temperature(cls, v):
         """验证OpenAI温度参数"""
         if not 0.0 <= v <= 2.0:
@@ -109,11 +110,12 @@ class Settings(BaseSettings):
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
     
-    class Config:
-        """Pydantic配置"""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = {
+        "env_file": [".env", "/app/.env"],
+        "env_file_encoding": "utf-8", 
+        "case_sensitive": False,
+        "extra": "ignore"
+    }
 
 
 # 创建全局配置实例

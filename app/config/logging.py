@@ -32,14 +32,29 @@ def setup_logging() -> None:
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
 
-    # 配置标准库日志
+    # 配置标准库日志 - 强制输出到stdout
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, settings.log_level.upper()))
+    
+    # 清除所有现有处理器
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # 创建stdout处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(getattr(logging, settings.log_level.upper()))
+    
+    # 设置格式
+    console_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    console_handler.setFormatter(console_formatter)
+    
+    # 添加到根日志器
+    root_logger.addHandler(console_handler)
+    
+    # 配置structlog
     if STRUCTLOG_AVAILABLE:
-        logging.basicConfig(
-            format="%(message)s",
-            stream=sys.stdout,
-            level=getattr(logging, settings.log_level.upper())
-        )
-
         # 配置structlog
         if settings.log_format.lower() == "json":
             processors = [
@@ -75,17 +90,19 @@ def setup_logging() -> None:
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
-    else:
-        # 使用标准库日志作为后备
-        logging.basicConfig(
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            stream=sys.stdout,
-            level=getattr(logging, settings.log_level.upper())
-        )
 
-    # 配置文件处理器
+    # 配置文件处理器（如果需要）
     if settings.log_file_path:
         setup_file_handler(settings)
+    
+    # 强制刷新所有处理器
+    for handler in root_logger.handlers:
+        if hasattr(handler, 'flush'):
+            handler.flush()
+    
+    # 确保日志立即输出
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 def setup_file_handler(settings) -> None:
@@ -158,9 +175,17 @@ class StructuredLogger:
         else:
             self.logger = logging.getLogger(name)
             self.use_structlog = False
+        
+        # 确保日志器有合适的级别
+        if hasattr(self.logger, 'setLevel'):
+            self.logger.setLevel(logging.DEBUG)
     
     def debug(self, message: str, **kwargs):
         """调试日志"""
+        # 同时输出到print和logger
+        print(f"[DEBUG] {message} {kwargs}")
+        sys.stdout.flush()
+        
         if self.use_structlog:
             self.logger.debug(message, **kwargs)
         else:
@@ -170,6 +195,10 @@ class StructuredLogger:
 
     def info(self, message: str, **kwargs):
         """信息日志"""
+        # 同时输出到print和logger
+        print(f"[INFO] {message} {kwargs}")
+        sys.stdout.flush()
+        
         if self.use_structlog:
             self.logger.info(message, **kwargs)
         else:
@@ -179,6 +208,10 @@ class StructuredLogger:
 
     def warning(self, message: str, **kwargs):
         """警告日志"""
+        # 同时输出到print和logger
+        print(f"[WARNING] {message} {kwargs}")
+        sys.stdout.flush()
+        
         if self.use_structlog:
             self.logger.warning(message, **kwargs)
         else:
@@ -188,6 +221,10 @@ class StructuredLogger:
 
     def error(self, message: str, **kwargs):
         """错误日志"""
+        # 同时输出到print和logger
+        print(f"[ERROR] {message} {kwargs}")
+        sys.stdout.flush()
+        
         if self.use_structlog:
             self.logger.error(message, **kwargs)
         else:
@@ -197,6 +234,10 @@ class StructuredLogger:
 
     def critical(self, message: str, **kwargs):
         """严重错误日志"""
+        # 同时输出到print和logger
+        print(f"[CRITICAL] {message} {kwargs}")
+        sys.stdout.flush()
+        
         if self.use_structlog:
             self.logger.critical(message, **kwargs)
         else:

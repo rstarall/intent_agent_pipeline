@@ -9,7 +9,7 @@ import asyncio
 from typing import Dict, List, Optional, Any
 
 from .base_task import BaseConversationTask
-from ..models import Message, ParallelTasksConfig, TaskConfig
+from ..models import Message, ParallelTasksConfig, TaskConfig, SearchResult
 from ..services import (
     KnowledgeService, LightRagService, SearchService, LLMService
 )
@@ -40,7 +40,8 @@ class WorkflowTask(BaseConversationTask):
             # 获取用户最新问题
             user_messages = self.history.get_messages_by_role("user")
             if not user_messages:
-                raise ValueError("没有找到用户问题")
+                await self.emit_error("NO_USER_MESSAGE", "没有找到用户问题")
+                return
             
             user_question = user_messages[-1].content
             
@@ -65,10 +66,53 @@ class WorkflowTask(BaseConversationTask):
                     "user_id": self.user_id
                 }
             )
+            await self.emit_error("WORKFLOW_ERROR", f"工作流执行错误: {str(e)}")
             raise
     
+    async def _generate_with_stream(
+        self,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        system_message: Optional[str] = None,
+        content_prefix: str = ""
+    ) -> str:
+        """
+        使用流式响应生成LLM回复，同时收集完整响应用于后续处理
+        
+        Args:
+            prompt: 提示词
+            temperature: 温度参数
+            max_tokens: 最大令牌数
+            system_message: 系统消息
+            content_prefix: 内容前缀（用于区分不同阶段）
+            
+        Returns:
+            完整的LLM响应内容
+        """
+        full_response = ""
+        
+        # 使用流式响应
+        async for chunk in self.llm_service.generate_stream_response(
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_message=system_message,
+            conversation_history=self.history.get_recent_messages(limit=5)
+        ):
+            # 实时发送内容片段给用户
+            if content_prefix:
+                await self.emit_content(f"{content_prefix}{chunk}")
+            else:
+                await self.emit_content(chunk)
+            
+            # 收集完整响应
+            full_response += chunk
+        
+        return full_response
+    
     async def _stage_1_analyze_question(self, user_question: str) -> None:
-        """阶段1：问题分析与规划"""
+        """阶段1：问题分析与规划（流式版本）"""
         self.update_stage("analyzing_question")
         await self.emit_status("analyzing_question", progress=0.1)
         await self.emit_content("正在分析您的问题...")
@@ -96,8 +140,9 @@ class WorkflowTask(BaseConversationTask):
         }}
         """
         
-        # 调用LLM进行分析
-        analysis_result = await self.llm_service.generate_response(
+        # 使用流式响应生成分析结果
+        await self.emit_content("\n🔍 **分析思路：**\n")
+        analysis_result = await self._generate_with_stream(
             analyze_prompt,
             temperature=0.3
         )
@@ -106,15 +151,17 @@ class WorkflowTask(BaseConversationTask):
             analysis_data = json.loads(analysis_result)
             self.optimized_question = analysis_data.get("optimized_question", user_question)
             
-            await self.emit_content(f"问题分析完成：{analysis_data.get('analysis', '')}")
+            await self.emit_content(f"\n✅ **分析完成**")
+            await self.emit_content(f"- 优化后问题: {self.optimized_question}")
+            await self.emit_content(f"- 分析结果: {analysis_data.get('analysis', '')}")
             await self.emit_status("analyzing_question", status="completed", progress=0.25)
             
         except json.JSONDecodeError:
             self.optimized_question = user_question
-            await self.emit_content("问题分析完成，使用原始问题进行后续处理")
+            await self.emit_content("\n⚠️ JSON解析失败，使用原始问题进行后续处理")
     
     async def _stage_2_task_scheduling(self) -> None:
-        """阶段2：任务分解与调度"""
+        """阶段2：任务分解与调度（流式版本）"""
         self.update_stage("task_scheduling")
         await self.emit_status("task_scheduling", progress=0.3)
         await self.emit_content("正在制定检索策略...")
@@ -140,8 +187,9 @@ class WorkflowTask(BaseConversationTask):
         }}
         """
         
-        # 调用LLM生成任务配置
-        schedule_result = await self.llm_service.generate_response(
+        # 使用流式响应生成任务配置
+        await self.emit_content("\n📋 **任务规划：**\n")
+        schedule_result = await self._generate_with_stream(
             schedule_prompt,
             temperature=0.2
         )
@@ -156,7 +204,7 @@ class WorkflowTask(BaseConversationTask):
                 timeout=60
             )
             
-            await self.emit_content(f"已生成 {len(tasks)} 个并行检索任务")
+            await self.emit_content(f"\n✅ **任务规划完成** - 已生成 {len(tasks)} 个并行检索任务")
             await self.emit_status("task_scheduling", status="completed", progress=0.4)
             
         except (json.JSONDecodeError, Exception) as e:
@@ -173,7 +221,8 @@ class WorkflowTask(BaseConversationTask):
                 timeout=60
             )
             
-            await self.emit_content("使用默认检索策略")
+            await self.emit_content(f"\n⚠️ 任务配置解析失败，使用默认配置")
+            await self.emit_status("task_scheduling", status="completed", progress=0.4)
     
     async def _stage_3_execute_tasks(self) -> None:
         """阶段3：并行任务执行"""
@@ -214,50 +263,62 @@ class WorkflowTask(BaseConversationTask):
         await self.emit_status("executing_tasks", status="completed", progress=0.8)
     
     async def _stage_4_generate_answer(self, user_question: str) -> None:
-        """阶段4：结果整合与回答"""
+        """阶段4：结果整合与回答（流式版本）"""
         self.update_stage("generating_answer")
         await self.emit_status("generating_answer", progress=0.9)
         await self.emit_content("正在整合信息并生成回答...")
         
-        # 构建整合提示
-        results_context = self._build_results_context()
-        history_context = self._build_history_context()
-        
-        integration_prompt = f"""
-        基于检索到的信息，为用户提供全面准确的回答。
-        
-        用户原始问题：{user_question}
-        优化后问题：{self.optimized_question}
-        
-        检索结果：
-        {results_context}
-        
-        对话历史：
-        {history_context}
-        
-        请基于以上信息，生成一个全面、准确、有用的回答。要求：
-        1. 直接回答用户问题
-        2. 整合多源信息
-        3. 保持专业性和准确性
-        4. 如果信息不足，请明确说明
-        """
-        
-        # 生成最终回答
-        self.final_answer = await self.llm_service.generate_response(
-            integration_prompt,
-            temperature=0.7
-        )
-        
-        # 添加助手回答到历史
-        assistant_message = Message(
-            role="assistant",
-            content=self.final_answer,
-            metadata={"stage": "final_answer", "sources": list(self.task_results.keys())}
-        )
-        self.add_message(assistant_message)
-        
-        await self.emit_content(self.final_answer)
-        await self.emit_status("generating_answer", status="completed", progress=1.0)
+        try:
+            # 构建整合提示
+            results_context = self._build_results_context()
+            history_context = self._build_history_context()
+            
+            integration_prompt = f"""
+            基于检索到的信息，为用户提供全面准确的回答。
+            
+            用户原始问题：{user_question}
+            优化后问题：{self.optimized_question}
+            
+            检索结果：
+            {results_context}
+            
+            对话历史：
+            {history_context}
+            
+            请基于以上信息，生成一个全面、准确、有用的回答。要求：
+            1. 直接回答用户问题
+            2. 整合多源信息
+            3. 保持专业性和准确性
+            4. 如果信息不足，请明确说明
+            """
+            
+            # 使用流式响应生成最终回答
+            await self.emit_content("\n💡 **正在生成回答：**\n")
+            self.final_answer = await self._generate_with_stream(
+                integration_prompt,
+                temperature=0.7
+            )
+            
+            # 如果没有获得有效回答，提供默认回答
+            if not self.final_answer or len(self.final_answer.strip()) < 10:
+                self.final_answer = "很抱歉，我目前无法为您提供完整的回答。这可能是由于网络问题或服务暂时不可用。请稍后再试。"
+                await self.emit_content(f"\n⚠️ {self.final_answer}")
+            
+            # 添加助手回答到历史
+            assistant_message = Message(
+                role="assistant",
+                content=self.final_answer,
+                metadata={"stage": "final_answer", "sources": list(self.task_results.keys())}
+            )
+            self.history.add_message(assistant_message)
+            
+            await self.emit_content(f"\n✅ **回答生成完成**")
+            await self.emit_status("generating_answer", status="completed", progress=1.0)
+            
+        except Exception as e:
+            error_msg = f"生成回答时发生错误: {str(e)}"
+            await self.emit_error("ANSWER_GENERATION_ERROR", error_msg)
+            self.final_answer = f"抱歉，{error_msg}"
     
     async def _execute_online_search(self, query: str) -> Dict[str, Any]:
         """执行在线搜索"""
@@ -314,6 +375,19 @@ class WorkflowTask(BaseConversationTask):
             if "error" in result:
                 context_parts.append(f"{task_type}: 检索失败 - {result['error']}")
             else:
-                context_parts.append(f"{task_type}: {json.dumps(result, ensure_ascii=False)}")
+                # 处理包含SearchResult对象的结果
+                serializable_result = self._make_serializable(result)
+                context_parts.append(f"{task_type}: {json.dumps(serializable_result, ensure_ascii=False)}")
         
         return "\n\n".join(context_parts) if context_parts else "无检索结果"
+    
+    def _make_serializable(self, obj: Any) -> Any:
+        """将对象转换为可序列化的格式"""
+        if isinstance(obj, SearchResult):
+            return obj.to_dict()
+        elif isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: self._make_serializable(value) for key, value in obj.items()}
+        else:
+            return obj
