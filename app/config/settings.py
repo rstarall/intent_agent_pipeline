@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     knowledge_api_key: Optional[str] = Field(None, description="知识库API密钥")
     knowledge_timeout: int = Field(default=30, description="知识库请求超时时间")
     
+    # Open WebUI配置
+    openwebui_base_url: str = Field(default="http://localhost:8080", description="Open WebUI基础URL")
+    
     # LightRAG配置
     lightrag_api_url: str = Field(default="http://localhost:8001/api/lightrag", description="LightRAG API URL")
     lightrag_api_key: Optional[str] = Field(None, description="LightRAG API密钥")

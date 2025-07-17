@@ -297,6 +297,88 @@ class KnowledgeService:
             self.logger.error_with_context(e, {})
             raise
     
+    async def query_doc(
+        self,
+        token: str,
+        collection_name: str,
+        query: str,
+        k: int = 5,
+        k_reranker: Optional[int] = None,
+        r: Optional[float] = None,
+        hybrid: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        """
+        查询文档集合，符合examples/knowledge_search.py的接口格式
+        
+        Args:
+            token: 用户认证token
+            collection_name: 文档集合名称
+            query: 查询内容
+            k: 返回结果数量
+            k_reranker: 重排序结果数量
+            r: 相关性阈值
+            hybrid: 是否使用混合搜索
+            
+        Returns:
+            Dict[str, Any]: 查询结果
+        """
+        try:
+            # 准备请求数据
+            request_data = {
+                "collection_name": collection_name,
+                "query": query,
+                "k": k
+            }
+            
+            if k_reranker is not None:
+                request_data["k_reranker"] = k_reranker
+            if r is not None:
+                request_data["r"] = r
+            if hybrid is not None:
+                request_data["hybrid"] = hybrid
+            
+            # 准备请求头
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            # 发送请求
+            session = await self._get_session()
+            url = f"{self.settings.openwebui_base_url.rstrip('/')}/api/v1/retrieval/query/doc"
+            
+            async with session.post(
+                url,
+                headers=headers,
+                json=request_data
+            ) as response:
+                
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"知识库查询API错误 {response.status}: {error_text}")
+                
+                result = await response.json()
+                
+                self.logger.info(
+                    "文档查询完成",
+                    collection_name=collection_name,
+                    query=query,
+                    result_count=len(result.get("documents", [{}])[0] if result.get("documents") else 0)
+                )
+                
+                return result
+                
+        except Exception as e:
+            self.logger.error_with_context(
+                e,
+                {
+                    "collection_name": collection_name,
+                    "query": query,
+                    "k": k
+                }
+            )
+            raise
+    
     async def health_check(self) -> bool:
         """
         检查知识库服务健康状态

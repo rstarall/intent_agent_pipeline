@@ -44,21 +44,47 @@ class StreamResponse(BaseModel):
         }
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
+        """转换为字典格式，符合intent_pipeline.py期望的结构"""
         data = {
-            "conversation_id": self.conversation_id,
-            "response_type": self.response_type,
+            "type": self.response_type,
             "timestamp": self.timestamp.isoformat()
         }
         
-        # 只包含非None的字段
-        for field_name in ["stage", "agent_name", "status", "progress", 
-                          "content", "metadata", "error_code", "error_message"]:
-            value = getattr(self, field_name)
-            if value is not None:
-                data[field_name] = value
+        # 根据响应类型添加对应字段
+        if self.response_type == "content":
+            data["content"] = self.content or ""
+        elif self.response_type == "status":
+            data["description"] = self._get_status_description()
+            if self.stage:
+                data["stage"] = self.stage
+        elif self.response_type == "progress":
+            data["progress"] = self.progress or 0.0
+            if self.stage:
+                data["stage"] = self.stage
+        elif self.response_type == "error":
+            data["error"] = self.error_message or "未知错误"
+            if self.error_code:
+                data["code"] = self.error_code
+        
+        # 添加元数据（如果有）
+        if self.metadata:
+            data.update(self.metadata)
         
         return data
+    
+    def _get_status_description(self) -> str:
+        """获取状态描述"""
+        if self.stage:
+            stage_descriptions = {
+                "initialization": "正在初始化...",
+                "online_search": "正在进行联网搜索...",
+                "knowledge_search": "正在搜索知识库...",
+                "lightrag_query": "正在进行LightRAG查询...",
+                "response_generation": "正在生成响应...",
+                "completed": "处理完成"
+            }
+            return stage_descriptions.get(self.stage, f"当前阶段: {self.stage}")
+        return "正在处理..."
     
     @classmethod
     def create_status_response(

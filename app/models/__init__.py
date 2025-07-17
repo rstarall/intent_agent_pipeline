@@ -15,7 +15,7 @@ from .enums import (
 
 # 消息相关模型
 from .message import (
-    Message, ConversationHistory, ChatRequest, ChatResponse
+    Message, ConversationHistory, ChatRequest, ChatResponse, CreateConversationRequest
 )
 
 # 上下文相关模型
@@ -38,7 +38,7 @@ __all__ = [
     "SearchTypeType", "LightRagModeType",
 
     # 消息相关模型
-    "Message", "ConversationHistory", "ChatRequest", "ChatResponse",
+    "Message", "ConversationHistory", "ChatRequest", "ChatResponse", "CreateConversationRequest",
 
     # 上下文相关模型
     "OnlineSearchContext", "KnowledgeSearchContext", "LightRagContext",

@@ -12,10 +12,11 @@ from datetime import datetime
 
 from ...models import (
     ChatRequest, ChatResponse, APIResponse, Message,
-    ExecutionModeType, StreamResponse
+    ExecutionModeType, StreamResponse, CreateConversationRequest
 )
 from ...core import PipelineInterface
 from ...config import get_logger
+from ...api.middleware import optional_token
 
 
 router = APIRouter()
@@ -29,31 +30,34 @@ def get_pipeline_interface(request: Request) -> PipelineInterface:
 
 @router.post("/conversations", response_model=APIResponse)
 async def create_conversation(
-    user_id: str,
-    mode: ExecutionModeType = "workflow",
-    pipeline: PipelineInterface = Depends(get_pipeline_interface)
+    request: CreateConversationRequest,
+    pipeline: PipelineInterface = Depends(get_pipeline_interface),
+    token: Optional[str] = Depends(optional_token)
 ):
     """
     创建新对话会话
     
     Args:
-        user_id: 用户ID
-        mode: 执行模式 ("workflow" 或 "agent")
+        request: 创建对话请求
         pipeline: Pipeline接口实例
+        token: 用户认证token
         
     Returns:
         APIResponse: 包含对话ID的响应
     """
     try:
-        logger.info(f"创建新对话会话: user_id={user_id}, mode={mode}")
+        # 从请求中获取token（优先级：依赖注入 > 请求体）
+        user_token = token or request.get_user_token()
+        
+        logger.info(f"创建新对话会话: user_id={request.user_id}, mode={request.mode}")
         
         # 创建对话
-        conversation_id = pipeline.create_conversation(user_id, mode)
+        conversation_id = pipeline.create_conversation(request.user_id, request.mode)
         
         response_data = {
             "conversation_id": conversation_id,
-            "user_id": user_id,
-            "mode": mode,
+            "user_id": request.user_id,
+            "mode": request.mode,
             "created_at": datetime.now().isoformat()
         }
         
@@ -69,8 +73,8 @@ async def create_conversation(
             e,
             {
                 "operation": "create_conversation",
-                "user_id": user_id,
-                "mode": mode
+                "user_id": request.user_id,
+                "mode": request.mode
             }
         )
         
@@ -157,7 +161,8 @@ async def send_message(
 async def stream_chat(
     conversation_id: str,
     request: ChatRequest,
-    pipeline: PipelineInterface = Depends(get_pipeline_interface)
+    pipeline: PipelineInterface = Depends(get_pipeline_interface),
+    token: Optional[str] = Depends(optional_token)
 ):
     """
     流式聊天接口
@@ -166,11 +171,15 @@ async def stream_chat(
         conversation_id: 对话ID
         request: 聊天请求
         pipeline: Pipeline接口实例
+        token: 用户认证token
         
     Returns:
         StreamingResponse: 流式响应
     """
     try:
+        # 从请求中获取token（优先级：依赖注入 > 请求体）
+        user_token = token or request.get_user_token()
+        
         logger.info(f"开始流式聊天: conversation_id={conversation_id}")
         
         # 验证对话ID匹配
@@ -186,43 +195,11 @@ async def stream_chat(
                 async for stream_response in pipeline.send_message(
                     conversation_id,
                     request.message,
-                    request.user_id
+                    request.user_id,
+                    user_token
                 ):
-                    # 根据响应类型格式化输出
-                    if stream_response.response_type == "status":
-                        # 状态信息：JSON格式
-                        yield f"data: {json.dumps(stream_response.to_dict(), ensure_ascii=False)}\n\n"
-                    
-                    elif stream_response.response_type == "content":
-                        # 聊天内容：特殊格式标记
-                        content_data = {
-                            'type': 'content',
-                            'content': stream_response.content,
-                            'timestamp': stream_response.timestamp.isoformat(),
-                            'conversation_id': stream_response.conversation_id
-                        }
-                        yield f"data: {json.dumps(content_data, ensure_ascii=False)}\n\n"
-                    
-                    elif stream_response.response_type == "progress":
-                        # 进度信息
-                        progress_data = {
-                            'type': 'progress',
-                            'progress': stream_response.progress,
-                            'stage': stream_response.stage,
-                            'timestamp': stream_response.timestamp.isoformat()
-                        }
-                        yield f"data: {json.dumps(progress_data, ensure_ascii=False)}\n\n"
-                    
-                    elif stream_response.response_type == "error":
-                        # 错误信息
-                        error_data = {
-                            'type': 'error',
-                            'error': stream_response.error_message,
-                            'code': stream_response.error_code,
-                            'timestamp': stream_response.timestamp.isoformat()
-                        }
-                        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-                        break
+                    # 使用新的to_dict方法格式化响应
+                    yield f"data: {json.dumps(stream_response.to_dict(), ensure_ascii=False)}\n\n"
                 
                 # 发送结束标记
                 yield "data: [DONE]\n\n"

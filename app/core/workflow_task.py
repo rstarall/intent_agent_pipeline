@@ -270,8 +270,21 @@ class WorkflowTask(BaseConversationTask):
     async def _execute_knowledge_search(self, query: str) -> Dict[str, Any]:
         """执行知识库搜索"""
         try:
-            results = await self.knowledge_service.search_cosmetics_knowledge(query)
-            return {"type": "knowledge_search", "query": query, "results": results}
+            # 如果有用户token，使用新的query_doc方法
+            if hasattr(self, 'user_token') and self.user_token:
+                # 使用默认的collection_name，可以在配置中设置
+                collection_name = "cosmetics_knowledge"  # 可配置
+                results = await self.knowledge_service.query_doc(
+                    token=self.user_token,
+                    collection_name=collection_name,
+                    query=query,
+                    k=5
+                )
+                return {"type": "knowledge_search", "query": query, "results": results}
+            else:
+                # 使用原有的方法
+                results = await self.knowledge_service.search_cosmetics_knowledge(query)
+                return {"type": "knowledge_search", "query": query, "results": results}
         except Exception as e:
             return {"type": "knowledge_search", "query": query, "error": str(e)}
     

@@ -84,9 +84,34 @@ class ChatRequest(BaseModel):
     
     conversation_id: str = Field(..., description="对话ID")
     message: str = Field(..., description="用户消息")
-    mode: str = Field(default="workflow", description="执行模式")
-    user_id: Optional[str] = Field(None, description="用户ID")
+    user_id: str = Field(..., description="用户ID")
+    mode: Optional[str] = Field(default="workflow", description="执行模式")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="请求元数据")
+    
+    # 支持从request body中获取用户信息
+    user: Optional[Dict[str, Any]] = Field(None, description="用户信息，包含token等")
+    
+    def get_user_token(self) -> Optional[str]:
+        """获取用户token"""
+        if self.user:
+            return self.user.get("token")
+        return None
+
+
+class CreateConversationRequest(BaseModel):
+    """创建对话请求数据模型"""
+    
+    user_id: str = Field(..., description="用户ID")
+    mode: str = Field(default="workflow", description="执行模式")
+    
+    # 支持从request body中获取用户信息
+    user: Optional[Dict[str, Any]] = Field(None, description="用户信息，包含token等")
+    
+    def get_user_token(self) -> Optional[str]:
+        """获取用户token"""
+        if self.user:
+            return self.user.get("token")
+        return None
 
 
 class ChatResponse(BaseModel):

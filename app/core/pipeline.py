@@ -75,7 +75,8 @@ class PipelineInterface:
         self, 
         conversation_id: str, 
         message: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        user_token: Optional[str] = None
     ) -> AsyncIterator[StreamResponse]:
         """
         发送消息并获取流式响应
@@ -84,6 +85,7 @@ class PipelineInterface:
             conversation_id: 对话ID
             message: 用户消息
             user_id: 用户ID（可选，用于验证）
+            user_token: 用户token（可选，用于知识库访问）
             
         Yields:
             StreamResponse: 流式响应
@@ -112,7 +114,7 @@ class PipelineInterface:
             )
             
             # 流式执行任务并返回响应
-            async for response in task.stream_response():
+            async for response in task.stream_response(user_token=user_token):
                 yield response
                 
         except Exception as e:

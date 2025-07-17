@@ -10,7 +10,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: intent-agent-pipeline-dev
     ports:
-      - "8000:8000"
+      - "8888:8000"
     environment:
       # 应用配置
       - ENVIRONMENT=development

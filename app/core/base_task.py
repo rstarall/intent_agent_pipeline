@@ -149,9 +149,12 @@ class BaseConversationTask(ABC):
         )
         await self.emit_response(response)
     
-    async def stream_response(self) -> AsyncIterator[StreamResponse]:
+    async def stream_response(self, user_token: Optional[str] = None) -> AsyncIterator[StreamResponse]:
         """流式返回状态和消息内容"""
         self._is_streaming = True
+        
+        # 保存用户token以供子类使用
+        self.user_token = user_token
         
         try:
             # 启动任务执行
