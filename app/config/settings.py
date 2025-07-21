@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     search_timeout: int = Field(default=30, description="搜索请求超时时间")
     search_max_results: int = Field(default=5, description="搜索最大结果数")
     
+    # SearXNG配置
+    searxng_url: str = Field(default="http://117.50.252.245:8081", description="SearXNG服务URL")
+    searxng_language: str = Field(default="zh-CN", description="SearXNG搜索语言")
+    searxng_categories: str = Field(default="general", description="SearXNG搜索类别")
+    searxng_time_range: str = Field(default="", description="SearXNG时间范围")
+    searxng_safesearch: int = Field(default=0, description="SearXNG安全搜索级别")
+    
     # Redis配置
     redis_host: str = Field(default="localhost", description="Redis主机")
     redis_port: int = Field(default=6379, description="Redis端口")

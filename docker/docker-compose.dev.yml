@@ -11,6 +11,8 @@ services:
     container_name: intent-agent-pipeline-dev
     ports:
       - "8888:8000"
+    env_file:
+      - ../.env  # 显式指定.env文件
     environment:
       # 应用配置
       - ENVIRONMENT=development
@@ -20,8 +22,8 @@ services:
       - API_PORT=8000
       
       # OpenAI配置
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-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}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-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}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
       

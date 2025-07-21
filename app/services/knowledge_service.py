@@ -37,7 +37,8 @@ class KnowledgeService:
         self,
         query: str,
         limit: int = 10,
-        threshold: float = 0.5
+        threshold: float = 0.5,
+        api_url: Optional[str] = None
     ) -> List[SearchResult]:
         """
         搜索化妆品知识库
@@ -46,6 +47,7 @@ class KnowledgeService:
             query: 搜索查询
             limit: 结果数量限制
             threshold: 相关性阈值
+            api_url: 可选的API URL，如果不提供则使用配置中的URL
             
         Returns:
             List[SearchResult]: 搜索结果列表
@@ -66,20 +68,36 @@ class KnowledgeService:
             if self.settings.knowledge_api_key:
                 headers["Authorization"] = f"Bearer {self.settings.knowledge_api_key}"
             
+            # 使用传入的API URL或默认配置
+            url = api_url or self.settings.knowledge_api_url
+            
+            # 检查URL是否配置
+            if not url:
+                raise Exception("知识库API URL未配置")
+            
+            self.logger.info(f"准备请求知识库API: {url}")
+            
             # 发送请求
             session = await self._get_session()
             
             async with session.post(
-                self.settings.knowledge_api_url,
+                url,
                 headers=headers,
                 json=request_data
             ) as response:
                 
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"知识库API错误 {response.status}: {error_text}")
+                response_text = await response.text()
                 
-                result = await response.json()
+                if response.status != 200:
+                    self.logger.error(f"知识库API返回错误状态码: {response.status}, 响应: {response_text}")
+                    raise Exception(f"知识库API错误 {response.status}: {response_text}")
+                
+                # 尝试解析JSON
+                try:
+                    result = json.loads(response_text) if response_text else {}
+                except json.JSONDecodeError:
+                    self.logger.error(f"知识库API返回无效的JSON: {response_text}")
+                    raise Exception(f"知识库API返回无效的JSON响应")
                 
                 # 解析响应数据
                 search_results = []
@@ -100,23 +118,48 @@ class KnowledgeService:
                             }
                         )
                         search_results.append(search_result)
+                else:
+                    # 如果没有results字段，记录警告
+                    self.logger.warning(
+                        f"知识库API响应中没有results字段",
+                        response=result,
+                        query=query
+                    )
                 
                 self.logger.info(
                     "知识库搜索完成",
                     query=query,
                     result_count=len(search_results),
-                    limit=limit
+                    limit=limit,
+                    has_results_field="results" in result
                 )
+                
+                # 如果没有找到任何结果且响应中没有明确的空结果标识，可能是API问题
+                if len(search_results) == 0 and "results" not in result:
+                    self.logger.warning("知识库API可能未正常工作，返回了空响应")
                 
                 return search_results
                 
+        except aiohttp.ClientError as e:
+            error_msg = f"知识库API连接失败: {str(e)}"
+            self.logger.error(error_msg)
+            self.logger.error_with_context(
+                e,
+                {
+                    "query": query,
+                    "limit": limit,
+                    "api_url": url,
+                    "error_type": "connection_error"
+                }
+            )
+            raise Exception(error_msg)
         except Exception as e:
             self.logger.error_with_context(
                 e,
                 {
                     "query": query,
                     "limit": limit,
-                    "api_url": self.settings.knowledge_api_url
+                    "api_url": url
                 }
             )
             raise
@@ -297,6 +340,116 @@ class KnowledgeService:
             self.logger.error_with_context(e, {})
             raise
     
+    async def get_knowledge_bases(
+        self,
+        token: str,
+        api_url: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        获取知识库列表
+        
+        Args:
+            token: 用户认证token
+            api_url: 可选的API基础URL，如果不提供则使用配置中的URL
+            
+        Returns:
+            List[Dict[str, Any]]: 知识库列表
+        """
+        try:
+            # 准备请求头
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            # 使用传入的API URL或默认配置
+            base_url = api_url or self.settings.openwebui_base_url
+            
+            # 检查URL是否配置
+            if not base_url:
+                raise Exception("知识库API URL未配置")
+            
+            # 发送请求
+            session = await self._get_session()
+            url = f"{base_url.rstrip('/')}/api/v1/knowledge/"
+            
+            self.logger.info(f"准备请求知识库列表API: {url}")
+            
+            async with session.get(url, headers=headers) as response:
+                
+                response_text = await response.text()
+                
+                if response.status != 200:
+                    self.logger.error(f"知识库列表API返回错误状态码: {response.status}, 响应: {response_text}")
+                    raise Exception(f"知识库列表API错误 {response.status}: {response_text}")
+                
+                # 尝试解析JSON
+                try:
+                    result = json.loads(response_text) if response_text else []
+                except json.JSONDecodeError:
+                    self.logger.error(f"知识库列表API返回无效的JSON: {response_text}")
+                    raise Exception(f"知识库列表API返回无效的JSON响应")
+                
+                self.logger.info(
+                    "获取知识库列表成功",
+                    knowledge_base_count=len(result)
+                )
+                
+                return result
+                
+        except aiohttp.ClientError as e:
+            error_msg = f"知识库列表API连接失败: {str(e)}"
+            self.logger.error(error_msg)
+            self.logger.error_with_context(
+                e,
+                {
+                    "api_url": url if 'url' in locals() else 'URL未构建',
+                    "error_type": "connection_error"
+                }
+            )
+            raise Exception(error_msg)
+        except Exception as e:
+            self.logger.error_with_context(e, {})
+            raise
+    
+    async def get_knowledge_base_id_by_name(
+        self,
+        token: str,
+        knowledge_base_name: str,
+        api_url: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        根据名称获取知识库ID
+        
+        Args:
+            token: 用户认证token
+            knowledge_base_name: 知识库名称
+            api_url: 可选的API基础URL
+            
+        Returns:
+            Optional[str]: 知识库ID，如果未找到返回None
+        """
+        try:
+            knowledge_bases = await self.get_knowledge_bases(token, api_url)
+            
+            for kb in knowledge_bases:
+                if kb.get('name') == knowledge_base_name:
+                    kb_id = kb.get('id')
+                    self.logger.info(f"找到知识库'{knowledge_base_name}'的ID: {kb_id}")
+                    return kb_id
+            
+            self.logger.warning(f"未找到名称为'{knowledge_base_name}'的知识库")
+            return None
+            
+        except Exception as e:
+            self.logger.error_with_context(
+                e,
+                {
+                    "knowledge_base_name": knowledge_base_name
+                }
+            )
+            raise
+    
     async def query_doc(
         self,
         token: str,
@@ -305,19 +458,24 @@ class KnowledgeService:
         k: int = 5,
         k_reranker: Optional[int] = None,
         r: Optional[float] = None,
-        hybrid: Optional[bool] = None
+        hybrid: Optional[bool] = None,
+        api_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         查询文档集合，符合examples/knowledge_search.py的接口格式
         
+        注意：collection_name参数实际上应该是collection_id（知识库ID），
+        但为了保持向后兼容性，参数名仍为collection_name。
+        
         Args:
             token: 用户认证token
-            collection_name: 文档集合名称
+            collection_name: 文档集合ID（知识库ID，不是名称）
             query: 查询内容
             k: 返回结果数量
             k_reranker: 重排序结果数量
             r: 相关性阈值
             hybrid: 是否使用混合搜索
+            api_url: 可选的API基础URL，如果不提供则使用配置中的URL
             
         Returns:
             Dict[str, Any]: 查询结果
@@ -330,12 +488,13 @@ class KnowledgeService:
                 "k": k
             }
             
-            if k_reranker is not None:
-                request_data["k_reranker"] = k_reranker
-            if r is not None:
-                request_data["r"] = r
-            if hybrid is not None:
-                request_data["hybrid"] = hybrid
+            # 不传递 hybrid, k_reranker, r 等参数，因为API不支持
+            # if k_reranker is not None:
+            #     request_data["k_reranker"] = k_reranker
+            # if r is not None:
+            #     request_data["r"] = r
+            # if hybrid is not None:
+            #     request_data["hybrid"] = hybrid
             
             # 准备请求头
             headers = {
@@ -343,9 +502,18 @@ class KnowledgeService:
                 "Content-Type": "application/json"
             }
             
+            # 使用传入的API URL或默认配置
+            base_url = api_url or self.settings.openwebui_base_url
+            
+            # 检查URL是否配置
+            if not base_url:
+                raise Exception("知识库查询API URL未配置")
+            
             # 发送请求
             session = await self._get_session()
-            url = f"{self.settings.openwebui_base_url.rstrip('/')}/api/v1/retrieval/query/doc"
+            url = f"{base_url.rstrip('/')}/api/v1/retrieval/query/doc"
+            
+            self.logger.info(f"准备请求文档查询API: {url}")
             
             async with session.post(
                 url,
@@ -353,21 +521,59 @@ class KnowledgeService:
                 json=request_data
             ) as response:
                 
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"知识库查询API错误 {response.status}: {error_text}")
+                response_text = await response.text()
                 
-                result = await response.json()
+                if response.status != 200:
+                    self.logger.error(f"知识库查询API返回错误状态码: {response.status}, 响应: {response_text}")
+                    raise Exception(f"知识库查询API错误 {response.status}: {response_text}")
+                
+                # 尝试解析JSON
+                try:
+                    result = json.loads(response_text) if response_text else {}
+                except json.JSONDecodeError:
+                    self.logger.error(f"知识库查询API返回无效的JSON: {response_text}")
+                    raise Exception(f"知识库查询API返回无效的JSON响应")
+                
+                # 计算结果数量
+                result_count = 0
+                if result.get("documents"):
+                    docs = result.get("documents", [])
+                    if docs and isinstance(docs[0], list):
+                        result_count = len(docs[0])
                 
                 self.logger.info(
                     "文档查询完成",
                     collection_name=collection_name,
                     query=query,
-                    result_count=len(result.get("documents", [{}])[0] if result.get("documents") else 0)
+                    result_count=result_count,
+                    has_documents="documents" in result
                 )
+                
+                # 如果没有文档字段，记录警告
+                if "documents" not in result:
+                    self.logger.warning(
+                        "知识库查询API响应中没有documents字段",
+                        response=result,
+                        collection_name=collection_name,
+                        query=query
+                    )
                 
                 return result
                 
+        except aiohttp.ClientError as e:
+            error_msg = f"知识库查询API连接失败: {str(e)}"
+            self.logger.error(error_msg)
+            self.logger.error_with_context(
+                e,
+                {
+                    "collection_name": collection_name,
+                    "query": query,
+                    "k": k,
+                    "api_url": url if 'url' in locals() else 'URL未构建',
+                    "error_type": "connection_error"
+                }
+            )
+            raise Exception(error_msg)
         except Exception as e:
             self.logger.error_with_context(
                 e,
@@ -375,6 +581,62 @@ class KnowledgeService:
                     "collection_name": collection_name,
                     "query": query,
                     "k": k
+                }
+            )
+            raise
+    
+    async def query_doc_by_name(
+        self,
+        token: str,
+        knowledge_base_name: str,
+        query: str,
+        k: int = 5,
+        k_reranker: Optional[int] = None,
+        r: Optional[float] = None,
+        hybrid: Optional[bool] = None,
+        api_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        根据知识库名称查询文档（会先获取ID）
+        
+        Args:
+            token: 用户认证token
+            knowledge_base_name: 知识库名称
+            query: 查询内容
+            k: 返回结果数量
+            k_reranker: 重排序结果数量
+            r: 相关性阈值
+            hybrid: 是否使用混合搜索
+            api_url: 可选的API基础URL
+            
+        Returns:
+            Dict[str, Any]: 查询结果
+        """
+        try:
+            # 先根据名称获取知识库ID
+            kb_id = await self.get_knowledge_base_id_by_name(token, knowledge_base_name, api_url)
+            
+            if not kb_id:
+                raise Exception(f"未找到名称为'{knowledge_base_name}'的知识库")
+            
+            # 使用ID进行查询
+            return await self.query_doc(
+                token=token,
+                collection_name=kb_id,  # 这里使用ID
+                query=query,
+                k=k,
+                k_reranker=k_reranker,
+                r=r,
+                hybrid=hybrid,
+                api_url=api_url
+            )
+            
+        except Exception as e:
+            self.logger.error_with_context(
+                e,
+                {
+                    "knowledge_base_name": knowledge_base_name,
+                    "query": query
                 }
             )
             raise

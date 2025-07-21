@@ -91,6 +91,11 @@ class ChatRequest(BaseModel):
     # 支持从request body中获取用户信息
     user: Optional[Dict[str, Any]] = Field(None, description="用户信息，包含token等")
     
+    # 新增：历史消息和知识库配置
+    messages: Optional[List[Dict[str, str]]] = Field(None, description="历史对话消息列表")
+    knowledge_bases: Optional[List[Dict[str, str]]] = Field(None, description="知识库配置列表")
+    knowledge_api_url: Optional[str] = Field(None, description="知识库API基础URL")
+    
     def get_user_token(self) -> Optional[str]:
         """获取用户token"""
         if self.user:
@@ -107,6 +112,10 @@ class CreateConversationRequest(BaseModel):
     
     # 支持从request body中获取用户信息
     user: Optional[Dict[str, Any]] = Field(None, description="用户信息，包含token等")
+    
+    # 新增：知识库配置
+    knowledge_bases: Optional[List[Dict[str, str]]] = Field(None, description="知识库配置列表")
+    knowledge_api_url: Optional[str] = Field(None, description="知识库API基础URL")
     
     def get_user_token(self) -> Optional[str]:
         """获取用户token"""

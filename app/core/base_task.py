@@ -47,6 +47,12 @@ class BaseConversationTask(ABC):
         self.updated_at = datetime.now()
         self.metadata: Dict[str, Any] = {}
         
+        # 知识库配置（默认为空，等待外部传入）
+        self.knowledge_bases: List[Dict[str, str]] = []
+        
+        # 知识库API URL
+        self.knowledge_api_url: Optional[str] = None
+        
         # 日志器
         self.logger = get_logger(f"{self.__class__.__name__}")
         

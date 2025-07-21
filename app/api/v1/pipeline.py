@@ -57,11 +57,13 @@ async def create_conversation(
         logger.info(log_info)
         print(f"[DEBUG] {log_info}")  # 添加print确保日志输出
         
-        # 创建对话 - 传递可选的conversation_id
+        # 创建对话 - 传递可选的conversation_id和知识库配置
         conversation_id = pipeline.create_conversation(
             user_id=request.user_id,
             mode=request.mode,
-            conversation_id=request.conversation_id
+            conversation_id=request.conversation_id,
+            knowledge_bases=request.knowledge_bases,
+            knowledge_api_url=request.knowledge_api_url
         )
         
         response_data = {
@@ -234,7 +236,10 @@ async def stream_chat(
                     conversation_id,
                     request.message,
                     request.user_id,
-                    user_token
+                    user_token,
+                    request.messages,
+                    request.knowledge_bases,
+                    request.knowledge_api_url
                 ):
                     response_count += 1
                     

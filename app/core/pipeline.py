@@ -30,7 +30,9 @@ class PipelineInterface:
         self,
         user_id: str,
         mode: ExecutionModeType = "workflow",
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        knowledge_bases: Optional[List[Dict[str, str]]] = None,
+        knowledge_api_url: Optional[str] = None
     ) -> str:
         """
         创建新对话会话
@@ -39,6 +41,8 @@ class PipelineInterface:
             user_id: 用户ID
             mode: 执行模式 ("workflow" 或 "agent")
             conversation_id: 可选的对话ID，如果提供则使用该ID，否则自动生成
+            knowledge_bases: 知识库配置列表
+            knowledge_api_url: 知识库API基础URL
             
         Returns:
             conversation_id: 对话唯一标识
@@ -60,6 +64,15 @@ class PipelineInterface:
                 task = AgentTask(user_id, final_conversation_id)
             else:
                 raise ValueError(f"不支持的执行模式: {mode}")
+            
+            # 如果提供了知识库配置，替换默认配置
+            if knowledge_bases:
+                task.knowledge_bases = knowledge_bases
+            # 否则使用默认配置（已在BaseConversationTask中设置）
+            
+            # 如果提供了知识库API URL，设置到任务中
+            if knowledge_api_url:
+                task.knowledge_api_url = knowledge_api_url
             
             # 保存到活跃对话字典
             self.active_conversations[final_conversation_id] = task
@@ -91,7 +104,10 @@ class PipelineInterface:
         conversation_id: str, 
         message: str,
         user_id: Optional[str] = None,
-        user_token: Optional[str] = None
+        user_token: Optional[str] = None,
+        messages: Optional[List[Dict[str, str]]] = None,
+        knowledge_bases: Optional[List[Dict[str, str]]] = None,
+        knowledge_api_url: Optional[str] = None
     ) -> AsyncIterator[StreamResponse]:
         """
         发送消息并获取流式响应
@@ -101,6 +117,9 @@ class PipelineInterface:
             message: 用户消息
             user_id: 用户ID（可选，用于验证）
             user_token: 用户token（可选，用于知识库访问）
+            messages: 历史对话消息列表
+            knowledge_bases: 知识库配置列表
+            knowledge_api_url: 知识库API基础URL
             
         Yields:
             StreamResponse: 流式响应
@@ -113,7 +132,26 @@ class PipelineInterface:
             if user_id and task.user_id != user_id:
                 raise ValueError("用户ID不匹配")
             
-            # 添加用户消息到历史
+            # 如果提供了历史消息，先添加到任务中
+            if messages:
+                for msg in messages[:-1]:  # 排除最后一条（当前消息）
+                    if msg.get("role") and msg.get("content"):
+                        history_message = Message(
+                            role=msg["role"],
+                            content=msg["content"],
+                            metadata={"source": "history"}
+                        )
+                        task.add_message(history_message)
+            
+            # 如果提供了知识库配置，更新任务中的配置（替换默认配置）
+            if knowledge_bases:
+                task.knowledge_bases = knowledge_bases
+                
+            # 如果提供了知识库API URL，更新任务中的URL
+            if knowledge_api_url:
+                task.knowledge_api_url = knowledge_api_url
+            
+            # 添加当前用户消息到历史
             user_message = Message(
                 role="user",
                 content=message,
@@ -125,7 +163,9 @@ class PipelineInterface:
                 "接收用户消息",
                 conversation_id=conversation_id,
                 message_length=len(message),
-                mode=task.mode
+                mode=task.mode,
+                history_count=len(messages) if messages else 0,
+                knowledge_bases_count=len(knowledge_bases) if knowledge_bases else 0
             )
             
             # 流式执行任务并返回响应

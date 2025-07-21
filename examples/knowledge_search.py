@@ -1,19 +1,16 @@
 import requests
 import json
 
-def query_doc(base_url, token, collection_name, query, k=5, k_reranker=None, r=None, hybrid=None):
+def query_doc(base_url, token, collection_name, query, k=5):
     """
     调用知识库查询接口
     
     Args:
         base_url: Open WebUI的基础URL
         token: 用户token
-        collection_name: 文档集合名称
+        collection_name: 文档集合ID（注意：需要传入知识库ID，不是名称）
         query: 查询内容
         k: 返回结果数量
-        k_reranker: 重排序结果数量
-        r: 相关性阈值
-        hybrid: 是否使用混合搜索
     
     Returns:
         dict: 查询结果，格式如下：
@@ -43,12 +40,7 @@ def query_doc(base_url, token, collection_name, query, k=5, k_reranker=None, r=N
         "k": k
     }
     
-    if k_reranker is not None:
-        data["k_reranker"] = k_reranker
-    if r is not None:
-        data["r"] = r
-    if hybrid is not None:
-        data["hybrid"] = hybrid
+    # 不支持 k_reranker, r, hybrid 等参数
     
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()

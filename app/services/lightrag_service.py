@@ -66,9 +66,15 @@ class LightRagService:
             if self.settings.lightrag_api_key:
                 headers["Authorization"] = f"Bearer {self.settings.lightrag_api_key}"
             
+            # 检查URL是否配置
+            if not self.settings.lightrag_api_url:
+                raise Exception("LightRAG API URL未配置")
+            
             # 发送请求
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/query"
+            
+            self.logger.info(f"准备请求LightRAG API: {url}")
             
             async with session.post(
                 url,
@@ -76,18 +82,55 @@ class LightRagService:
                 json=request_data
             ) as response:
                 
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"LightRAG API错误 {response.status}: {error_text}")
+                response_text = await response.text()
                 
-                result = await response.json()
+                if response.status != 200:
+                    self.logger.error(f"LightRAG API返回错误状态码: {response.status}, 响应: {response_text}")
+                    raise Exception(f"LightRAG API错误 {response.status}: {response_text}")
+                
+                # 尝试解析JSON
+                try:
+                    result = json.loads(response_text) if response_text else {}
+                except json.JSONDecodeError:
+                    self.logger.error(f"LightRAG API返回无效的JSON: {response_text}")
+                    raise Exception(f"LightRAG API返回无效的JSON响应")
                 
                 # 解析响应数据
                 search_results = []
                 
                 # LightRAG可能返回不同格式的数据
-                if "answer" in result:
-                    # 如果有直接答案
+                # 首先检查是否有response字段（新格式）
+                if "response" in result:
+                    # 新格式：直接返回response文本
+                    content = result["response"]
+                    # 提取引用信息
+                    references = []
+                    if "References" in content:
+                        ref_start = content.find("References")
+                        if ref_start > 0:
+                            references_text = content[ref_start:]
+                            # 保留原始内容，但记录引用
+                            import re
+                            ref_pattern = r'\* \[DC\] (.+?)(?:\n|$)'
+                            matches = re.findall(ref_pattern, references_text)
+                            references = matches
+                    
+                    search_result = SearchResult(
+                        title="LightRAG知识图谱回答",
+                        content=content,
+                        source="lightrag",
+                        score=1.0,
+                        metadata={
+                            "mode": mode,
+                            "references": references,
+                            "query": query
+                        }
+                    )
+                    search_results.append(search_result)
+                
+                # 兼容旧格式
+                elif "answer" in result:
+                    # 如果有直接答案（旧格式）
                     search_result = SearchResult(
                         title="LightRAG回答",
                         content=result["answer"],
@@ -135,15 +178,48 @@ class LightRagService:
                         )
                         search_results.append(search_result)
                 
+                # 检查是否真的有数据
+                has_data = any([
+                    "response" in result,  # 新增response字段检查
+                    "answer" in result,
+                    "contexts" in result,
+                    "entities" in result
+                ])
+                
+                if not has_data:
+                    self.logger.warning(
+                        "LightRAG API响应中没有找到有效数据字段",
+                        response=result,
+                        query=query,
+                        mode=mode
+                    )
+                
                 self.logger.info(
                     "LightRAG检索完成",
                     query=query,
                     mode=mode,
-                    result_count=len(search_results)
+                    result_count=len(search_results),
+                    has_response="response" in result,
+                    has_answer="answer" in result,
+                    has_contexts="contexts" in result,
+                    has_entities="entities" in result
                 )
                 
                 return search_results
                 
+        except aiohttp.ClientError as e:
+            error_msg = f"LightRAG API连接失败: {str(e)}"
+            self.logger.error(error_msg)
+            self.logger.error_with_context(
+                e,
+                {
+                    "query": query,
+                    "mode": mode,
+                    "api_url": self.settings.lightrag_api_url,
+                    "error_type": "connection_error"
+                }
+            )
+            raise Exception(error_msg)
         except Exception as e:
             self.logger.error_with_context(
                 e,
