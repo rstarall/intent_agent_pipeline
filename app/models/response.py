@@ -80,6 +80,7 @@ class StreamResponse(BaseModel):
             # 与intent_pipeline.py中的STATUS_MESSAGES匹配
             stage_descriptions = {
                 "initialization": "正在初始化对话...",
+                "expanding_question": "正在扩写优化问题...",
                 "analyzing_question": "正在分析问题...",
                 "task_scheduling": "正在调度任务...",
                 "executing_tasks": "正在执行任务...",

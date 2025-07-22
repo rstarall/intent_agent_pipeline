@@ -1,7 +1,12 @@
 """
 工作流任务类模块
 
-实现固定流程的多轮对话任务，包含4个阶段的执行流程。
+实现固定流程的多轮对话任务，包含5个阶段的执行流程：
+阶段0：问题扩写与优化
+阶段1：问题分析与规划  
+阶段2：任务分解与调度
+阶段3：并行任务执行
+阶段4：结果整合与回答
 """
 
 import json
@@ -10,6 +15,14 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from .base_task import BaseConversationTask
+from .prompts import (
+    build_question_expansion_prompt,
+    build_expert_analysis_prompt,
+    build_universal_task_planning_prompt, 
+    build_comprehensive_synthesis_prompt,
+    build_knowledge_base_selection_prompt,
+    PromptConfig
+)
 from ..models import Message, ParallelTasksConfig, TaskConfig, SearchResult
 from ..services import (
     KnowledgeService, LightRagService, SearchService, LLMService
@@ -30,6 +43,7 @@ class WorkflowTask(BaseConversationTask):
         self.llm_service = LLMService()
         
         # 工作流状态
+        self.expanded_question = ""  # 扩写后的问题
         self.optimized_question = ""
         self.parallel_tasks_config: Optional[ParallelTasksConfig] = None
         self.task_results: Dict[str, Any] = {}
@@ -46,8 +60,11 @@ class WorkflowTask(BaseConversationTask):
             
             user_question = user_messages[-1].content
             
+            # 阶段0：问题扩写与优化
+            await self._stage_0_expand_question(user_question)
+            
             # 阶段1：问题分析与规划
-            await self._stage_1_analyze_question(user_question)
+            await self._stage_1_analyze_question(self.expanded_question)
             
             # 阶段2：任务分解与调度
             await self._stage_2_task_scheduling()
@@ -118,190 +135,200 @@ class WorkflowTask(BaseConversationTask):
         
         return full_response
     
-    async def _stage_1_analyze_question(self, user_question: str) -> None:
-        """阶段1：问题分析与规划（流式版本）"""
-        self.update_stage("analyzing_question")
-        await self.emit_status("analyzing_question", progress=0.1)
-        await self.emit_content("正在分析您的问题...")
+    async def _stage_0_expand_question(self, user_question: str) -> None:
+        """阶段0：问题扩写与优化"""
+        self.update_stage("expanding_question")
+        await self.emit_status("expanding_question", progress=0.05)
+        await self.emit_content("🔍 **启动问题扩写与优化...**\n")
         
-        # 构建分析提示
+        # 构建历史对话上下文
         history_context = self._build_history_context()
         
-        analyze_prompt = f"""
-        请深入分析用户的问题，提取关键信息并优化问题表述。
+        # 获取最近的历史问题
+        recent_questions = self._get_recent_user_questions()
         
-        用户问题：{user_question}
+        # 使用问题扩写提示词
+        expansion_prompt = build_question_expansion_prompt(
+            user_question, 
+            history_context, 
+            recent_questions
+        )
         
-        对话历史：{history_context}
-        
-        请执行以下分析任务：
-        1. 识别关键概念和实体
-           - 主要对象（如：洗面奶、防晒霜、特定成分）
-           - 相关属性（如：成分、功效、使用方法、法规要求）
-           - 限定条件（如：敏感肌、特定年龄、使用场景）
-        
-        2. 理解问题意图
-           - 是寻求信息介绍？（what/是什么）
-           - 是寻求使用建议？（how/怎么用）
-           - 是寻求原因解释？（why/为什么）
-           - 是寻求比较选择？（which/哪个好）
-           - 是寻求法规标准？（规定/标准）
-        
-        3. 优化问题表述
-           - 补充必要的上下文信息
-           - 明确具体的查询重点
-           - 保留所有重要细节
-        
-        4. 制定检索策略
-           - 需要最新信息吗？（市场动态、新规定、新产品）
-           - 需要专业知识吗？（成分解析、配方原理、技术标准）
-           - 需要关联信息吗？（成分间相互作用、功效机理）
-        
-        请以JSON格式返回：
-        {{
-            "optimized_question": "包含所有关键信息的优化问题",
-            "analysis": "详细的问题分析，包括识别的关键概念、问题意图等",
-            "plan": "针对性的信息检索和回答策略"
-        }}
-        
-        重要：请只返回JSON对象，不要包含任何其他文本或解释。
-        """
-        
-        # 使用非流式响应生成JSON分析结果
-        await self.emit_content("\n🔍 **分析思路：**\n")
-        
-        # 显示正在分析的提示
-        await self.emit_content("正在深入分析问题，请稍候...")
+        await self.emit_content("正在基于历史上下文进行问题扩写...\n")
         
         try:
-            # 使用generate_json_response获取结构化数据
-            analysis_data = await self.llm_service.generate_json_response(
-                analyze_prompt,
-                temperature=0.3
+            # 使用generate_json_response获取扩写结果
+            expansion_data = await self.llm_service.generate_json_response(
+                expansion_prompt,
+                temperature=PromptConfig.EXPANSION_TEMPERATURE
             )
             
-            # 直接使用返回的字典数据
-            self.optimized_question = analysis_data.get("optimized_question", user_question)
+            # 提取扩写后的问题
+            self.expanded_question = expansion_data.get("expanded_question", user_question)
+            expansion_reasoning = expansion_data.get("expansion_reasoning", "")
+            context_relevance = expansion_data.get("context_relevance", "medium")
+            original_intent = expansion_data.get("original_intent", "")
             
-            # 格式化显示JSON结果
-            import json
-            formatted_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
-            await self.emit_content(f"\n```json\n{formatted_json}\n```")
+            # 验证扩写质量
+            if not self.expanded_question or len(self.expanded_question.strip()) < PromptConfig.MIN_EXPANSION_LENGTH:
+                self.expanded_question = user_question  # 使用原问题作为后备
+                await self.emit_content("⚠️ 问题扩写异常，使用原问题继续执行\n")
             
-            await self.emit_content(f"\n✅ **分析完成**")
-            await self.emit_content(f"- 优化后问题: {self.optimized_question}")
-            await self.emit_content(f"- 分析结果: {analysis_data.get('analysis', '')}")
-            await self.emit_status("analyzing_question", status="completed", progress=0.25)
+            # 显示扩写结果
+            await self.emit_content(f"**✨ 问题扩写完成**\n")
+            await self.emit_content(f"- **原始问题**: {user_question}\n")
+            await self.emit_content(f"- **扩写后问题**: {self.expanded_question}\n")
+            await self.emit_content(f"- **扩写理由**: {expansion_reasoning}\n")
+            await self.emit_content(f"- **上下文关联度**: {context_relevance}\n")
+            await self.emit_content(f"- **用户意图**: {original_intent}\n\n")
             
         except Exception as e:
-            # 如果JSON生成失败，使用原始问题
-            self.logger.warning(
-                "问题分析失败",
-                error=str(e)
+            self.logger.error_with_context(e, {"stage": "expansion", "question": user_question})
+            # 如果扩写失败，使用原问题
+            self.expanded_question = user_question
+            await self.emit_content("⚠️ 问题扩写失败，使用原问题继续执行\n")
+        
+        await self.emit_status("expanding_question", status="completed", progress=0.1)
+    
+    async def _stage_1_analyze_question(self, user_question: str) -> None:
+        """阶段1：专家级问题分析与规划"""
+        self.update_stage("analyzing_question")
+        await self.emit_status("analyzing_question", progress=0.15)
+        await self.emit_content("🔍 **启动专家级问题分析...**\n")
+        
+        # 构建历史对话上下文
+        history_context = self._build_history_context()
+        
+        # 使用SOTA专家分析提示词
+        analysis_prompt = build_expert_analysis_prompt(user_question, history_context)
+        
+        await self.emit_content("正在进行多维度专业分析，请稍候...\n")
+        
+        try:
+            # 使用generate_json_response获取结构化分析结果
+            analysis_data = await self.llm_service.generate_json_response(
+                analysis_prompt,
+                temperature=PromptConfig.ANALYSIS_TEMPERATURE
             )
+            
+            if analysis_data and "expert_analysis" in analysis_data:
+                expert_analysis = analysis_data["expert_analysis"]
+                
+                # 格式化显示专家分析结果
+                await self.emit_content("## 🎯 **专家分析结果**\n")
+                await self.emit_content(f"{expert_analysis}\n")
+                
+                # 保存分析结果供后续阶段使用
+                self.optimized_question = user_question  # 保持原问题，因为分析已经包含了优化思路
+                self.expert_analysis = expert_analysis
+                
+                await self.emit_content("\n✅ **专家分析完成** - 已生成深度专业分析\n")
+                await self.emit_status("analyzing_question", status="completed", progress=0.25)
+                
+            else:
+                # 分析数据格式异常，使用原始问题
+                self.logger.warning("专家分析返回数据格式异常")
+                self.optimized_question = user_question
+                self.expert_analysis = f"基于问题：{user_question}，需要进行全面的信息检索和分析。"
+                await self.emit_content("\n⚠️ 分析过程中遇到格式问题，已使用原始问题继续处理\n")
+                await self.emit_status("analyzing_question", status="completed", progress=0.25)
+                
+        except Exception as e:
+            # 如果专家分析失败，使用原始问题和基础分析
+            self.logger.warning(f"专家分析生成失败: {str(e)}")
             self.optimized_question = user_question
-            await self.emit_content("\n⚠️ 问题分析失败，使用原始问题进行后续处理")
+            self.expert_analysis = f"针对用户问题：{user_question}，需要进行多角度的信息收集和专业分析，以提供全面准确的回答。"
+            await self.emit_content(f"\n⚠️ 专家分析过程遇到问题，已切换到基础模式继续处理\n")
             await self.emit_status("analyzing_question", status="completed", progress=0.25)
     
     async def _stage_2_task_scheduling(self) -> None:
-        """阶段2：任务分解与调度（流式版本）"""
+        """阶段2：智能任务分解与调度"""
         self.update_stage("task_scheduling")
         await self.emit_status("task_scheduling", progress=0.3)
-        await self.emit_content("正在制定检索策略...")
+        await self.emit_content("📋 **启动智能任务规划...**\n")
         
-        # 构建任务调度提示
-        schedule_prompt = f"""
-        基于优化后的问题，生成并行检索任务配置。
+        # 获取专家分析结果
+        expert_analysis = getattr(self, 'expert_analysis', '需要进行全面的信息检索和分析')
         
-        用户问题：{self.optimized_question}
+        # 构建历史上下文
+        history_context = self._build_history_context()
         
-        可用的检索类型及其特点：
-        1. online_search - 在线搜索最新信息，适合查找时效性强的内容、最新资讯、新闻动态
-        2. knowledge_search - 专业知识库检索，适合查找专业知识、技术文档、规范标准
-        3. lightrag_search - LightRAG知识图谱检索，适合查找概念关联、知识图谱、深层次关系
+        # 使用通用任务规划提示词
+        planning_prompt = build_universal_task_planning_prompt(self.optimized_question, expert_analysis, history_context)
         
-        生成查询的要求：
-        1. 每个查询必须具体、明确，包含关键实体、概念和限定词
-        2. 不同检索类型的查询应有针对性，充分利用各自的优势
-        3. 查询应该覆盖问题的不同方面，但又有所侧重
-        4. 避免过于宽泛的查询，如"化妆品法规"，而应该具体到问题的核心点
-        5. 如果问题涉及时间敏感信息，online_search应包含时间限定词
-        6. 如果问题涉及专业概念，knowledge_search应包含专业术语
-        7. 如果问题涉及多个概念的关系，lightrag_search应体现关联性
-        
-        示例（仅供参考格式）：
-        - 如果用户问"洗面奶的成分"，不要只查询"洗面奶成分"
-        - online_search可以查询："2024年最新洗面奶成分安全标准 表面活性剂"
-        - knowledge_search可以查询："洗面奶配方成分表 清洁剂 保湿剂 功能性原料"
-        - lightrag_search可以查询："洗面奶成分功效关系 敏感肌适用成分"
-        
-        请为每种检索类型生成合适的查询，以JSON格式返回：
-        {{
-            "tasks": [
-                {{"type": "online_search", "query": "根据问题生成的具体在线搜索查询"}},
-                {{"type": "knowledge_search", "query": "根据问题生成的具体知识库查询"}},
-                {{"type": "lightrag_search", "query": "根据问题生成的具体图谱查询"}}
-            ]
-        }}
-        
-        重要：请只返回JSON对象，不要包含任何其他文本或解释。
-        """
-        
-        # 使用非流式响应生成JSON任务配置
-        await self.emit_content("\n📋 **任务规划：**\n")
-        
-        # 显示正在规划的提示
-        await self.emit_content("正在制定检索策略，请稍候...")
+        await self.emit_content("正在设计最优检索策略，请稍候...\n")
         
         try:
-            # 使用generate_json_response获取结构化数据
+            # 使用generate_json_response获取结构化任务配置
             schedule_data = await self.llm_service.generate_json_response(
-                schedule_prompt,
-                temperature=0.2
+                planning_prompt,
+                temperature=PromptConfig.PLANNING_TEMPERATURE
             )
             
-            # 直接使用返回的字典数据
-            tasks = [TaskConfig(**task) for task in schedule_data.get("tasks", [])]
-            
-            # 格式化显示JSON结果
-            import json
-            formatted_json = json.dumps(schedule_data, ensure_ascii=False, indent=2)
-            await self.emit_content(f"\n```json\n{formatted_json}\n```")
-            
-            self.parallel_tasks_config = ParallelTasksConfig(
-                tasks=tasks,
-                max_concurrency=3,
-                timeout=60
-            )
-            
-            await self.emit_content(f"\n✅ **任务规划完成** - 已生成 {len(tasks)} 个并行检索任务")
-            
-            # 如果有知识库配置，显示选择的知识库
-            if self.knowledge_bases and any(task.type == "knowledge_search" for task in tasks):
-                await self.emit_content("\n📚 **知识库选择：**")
-                await self.emit_content("系统将根据问题内容智能选择最相关的知识库进行检索")
+            if schedule_data and "tasks" in schedule_data and isinstance(schedule_data["tasks"], list):
+                tasks_config = schedule_data["tasks"]
                 
-                # 如果使用了自定义的知识库API URL
-                if self.knowledge_api_url:
-                    await self.emit_content(f"🔗 使用自定义知识库API: {self.knowledge_api_url}")
-            
-            await self.emit_status("task_scheduling", status="completed", progress=0.4)
-            
-        except Exception as e:
-            # 如果JSON生成失败，使用默认配置
-            self.logger.warning(
-                "任务规划失败",
-                error=str(e)
-            )
-            self._use_default_task_config()
-            await self.emit_content(f"\n⚠️ 任务规划失败，使用默认配置")
-            await self.emit_status("task_scheduling", status="completed", progress=0.4)
+                # 验证任务配置格式
+                valid_tasks = []
+                for task in tasks_config:
+                    if isinstance(task, dict) and "type" in task and "query" in task:
+                        # 确保任务类型有效
+                        if task["type"] in ["online_search", "knowledge_search", "lightrag_search"]:
+                            valid_tasks.append(TaskConfig(**task))
+                        else:
+                            self.logger.warning(f"无效的任务类型: {task.get('type')}")
+                
+                if valid_tasks:
+                    # 格式化显示任务规划结果
+                    await self.emit_content("## 🎯 **检索策略规划**\n")
+                    
+                    type_names = {
+                        "online_search": "🌐 在线搜索",
+                        "knowledge_search": "📚 知识库检索",
+                        "lightrag_search": "🔗 知识图谱"
+                    }
+                    
+                    for i, task in enumerate(valid_tasks, 1):
+                        type_name = type_names.get(task.type, task.type)
+                        await self.emit_content(f"**{i}. {type_name}**\n")
+                        await self.emit_content(f"   查询策略: {task.query}\n\n")
+                    
+                    self.parallel_tasks_config = ParallelTasksConfig(
+                        tasks=valid_tasks,
+                        max_concurrency=3,
+                        timeout=60
+                    )
+                    
+                    await self.emit_content(f"✅ **任务规划完成** - 已生成 {len(valid_tasks)} 个并行检索任务\n")
+                    
+                    # 如果有知识库配置，显示选择的知识库
+                    if self.knowledge_bases and any(task.type == "knowledge_search" for task in valid_tasks):
+                        await self.emit_content("\n📚 **知识库配置：**\n")
+                        await self.emit_content("系统将根据问题内容智能选择最相关的知识库进行检索\n")
+                        
+                        # 如果使用了自定义的知识库API URL
+                        if self.knowledge_api_url:
+                            await self.emit_content(f"🔗 使用自定义知识库API: {self.knowledge_api_url}\n")
+                    
+                    await self.emit_status("task_scheduling", status="completed", progress=0.4)
+                else:
+                    # 没有有效任务，使用默认配置
+                    self.logger.warning("没有生成有效的任务配置")
+                    self._use_default_task_config()
+                    await self.emit_content("⚠️ 任务配置验证失败，使用默认检索策略\n")
+                    await self.emit_status("task_scheduling", status="completed", progress=0.4)
+            else:
+                # JSON格式异常，使用默认配置
+                self.logger.warning("任务规划返回数据格式异常")
+                self._use_default_task_config()
+                await self.emit_content("⚠️ 任务规划数据格式异常，使用默认检索策略\n")
+                await self.emit_status("task_scheduling", status="completed", progress=0.4)
                 
         except Exception as e:
-            # 其他异常也使用默认配置
-            self.logger.error(f"任务配置处理异常: {e}")
+            # 如果任务规划失败，使用默认配置
+            self.logger.warning(f"任务规划生成失败: {str(e)}")
             self._use_default_task_config()
-            await self.emit_content(f"\n⚠️ 任务配置处理失败，使用默认配置")
+            await self.emit_content(f"⚠️ 任务规划过程遇到问题，使用默认检索策略\n")
             await self.emit_status("task_scheduling", status="completed", progress=0.4)
     
     def _use_default_task_config(self) -> None:
@@ -375,12 +402,23 @@ class WorkflowTask(BaseConversationTask):
                 # 计算结果数量
                 result_count = 0
                 if isinstance(result, dict):
-                    if "results" in result and isinstance(result["results"], list):
-                        result_count = len(result["results"])
-                    elif "documents" in result:  # 处理query_doc的返回格式
-                        docs = result.get("documents", [])
-                        if docs and isinstance(docs[0], list):
-                            result_count = len(docs[0])
+                    if "results" in result:
+                        raw_results = result["results"]
+                        if isinstance(raw_results, list):
+                            # 处理列表格式的结果（在线搜索、传统知识库搜索）
+                            result_count = len(raw_results)
+                        elif isinstance(raw_results, dict) and "documents" in raw_results:
+                            # 处理query_doc的返回格式
+                            docs = raw_results.get("documents", [])
+                            if docs and isinstance(docs[0], list):
+                                result_count = len(docs[0])
+                        elif isinstance(raw_results, dict):
+                            # 如果是其他字典格式，尝试从常见字段获取计数
+                            if "data" in raw_results:
+                                data = raw_results["data"]
+                                result_count = len(data) if isinstance(data, list) else 1
+                            elif raw_results:  # 非空字典就认为有结果
+                                result_count = 1
                 
                 # 向前端发送成功反馈
                 if result_count > 0:
@@ -404,98 +442,131 @@ class WorkflowTask(BaseConversationTask):
         await self.emit_status("executing_tasks", status="completed", progress=0.8)
     
     async def _stage_4_generate_answer(self, user_question: str) -> None:
-        """阶段4：结果整合与回答（流式版本）"""
+        """阶段4：专业综合分析与详细回答"""
         self.update_stage("generating_answer")
-        await self.emit_status("generating_answer", progress=0.9)
-        await self.emit_content("\n\n## 💡 最终回答\n")
+        await self.emit_status("generating_answer", progress=0.85)
+        await self.emit_content("\n\n## 💡 **专业综合分析**\n")
         
         try:
-            # 构建整合提示
+            # 构建检索结果上下文和历史上下文
             results_context = self._build_results_context()
             history_context = self._build_history_context()
             
-            integration_prompt = f"""
-            基于检索到的信息，为用户提供全面准确的回答。
-            
-            用户原始问题：{user_question}
-            优化后问题：{self.optimized_question}
-            
-            检索结果：
-            {results_context}
-            
-            对话历史：
-            {history_context}
-            
-            基于检索到的信息，请提供一个全面、深入、有价值的回答。
-            
-            **回答要求**：
-            
-            1. **核心内容**（必须包含）：
-               - 直接回答用户的问题，确保准确性
-               - 整合多个来源的信息，形成完整观点
-               - 分析不同来源信息的关联性和互补性
-            
-            2. **深度分析**（根据问题性质选择性包含）：
-               - 背景知识：如果有助于理解，简要介绍相关背景
-               - 原理解释：涉及技术或科学问题时，解释基本原理
-               - 多角度分析：从不同维度分析问题（如优缺点、适用场景等）
-               - 发展趋势：如果相关，可以提及领域的发展方向
-               - 实际应用：结合实际场景说明应用价值
-            
-            3. **引用规范**（严格遵守）：
-               - 在引用具体信息时使用上标数字[1]、[2]等
-               - 确保引用编号与检索结果中的编号一致
-               - 在回答末尾必须添加"**参考来源：**"部分
-               - 每个引用包含：
-                 * 引用编号
-                 * 来源类型（在线搜索/知识库检索/知识图谱）
-                 * 标题
-                 * **在线搜索必须包含完整URL链接**
-                 * 关键内容摘要
-            
-            4. **总结提升**（在回答末尾）：
-               - 核心要点总结：提炼最重要的2-3个关键信息
-               - 延伸思考：提出1-2个相关的思考问题或建议
-               - 信息完整性说明：如果某些方面信息不足，明确指出
-            
-            5. **写作风格**：
-               - 逻辑清晰：使用段落和要点组织内容
-               - 专业准确：使用领域内的专业术语
-               - 易于理解：复杂概念要有通俗解释
-               - 客观中立：如有争议观点，平衡呈现不同看法
-            
-            **特别注意**：
-            - 绝对不能编造信息或虚假URL
-            - 所有观点必须基于检索结果
-            - 如果信息存在冲突，要明确指出并分析原因
-            - 保持批判性思维，不盲目接受单一来源信息
-            """
+            # 使用综合分析提示词模板
+            synthesis_prompt = build_comprehensive_synthesis_prompt(
+                user_question,
+                self.expanded_question, 
+                self.optimized_question, 
+                results_context, 
+                history_context
+            )
             
             # 使用流式响应生成最终回答
             self.final_answer = await self._generate_with_stream(
-                integration_prompt,
-                temperature=0.7
+                synthesis_prompt,
+                temperature=PromptConfig.SYNTHESIS_TEMPERATURE,
+                max_tokens=PromptConfig.MAX_SYNTHESIS_TOKENS
             )
             
-            # 如果没有获得有效回答，提供默认回答
-            if not self.final_answer or len(self.final_answer.strip()) < 10:
-                self.final_answer = "很抱歉，我目前无法为您提供完整的回答。这可能是由于网络问题或服务暂时不可用。请稍后再试。"
-                await self.emit_content(f"\n⚠️ {self.final_answer}")
+            # 验证回答质量
+            if not self.final_answer or len(self.final_answer.strip()) < 100:
+                # 如果回答过短，提供基础回答
+                basic_answer = self._generate_basic_answer(user_question, results_context)
+                self.final_answer = basic_answer
+                await self.emit_content(f"\n⚠️ 专业分析生成异常，已提供基础回答\n")
+                await self.emit_content(basic_answer)
             
-            # 添加助手回答到历史
+            # 添加助手回答到历史记录
             assistant_message = Message(
                 role="assistant",
                 content=self.final_answer,
-                metadata={"stage": "final_answer", "sources": list(self.task_results.keys())}
+                metadata={
+                    "stage": "comprehensive_analysis", 
+                    "sources": list(self.task_results.keys()),
+                    "analysis_type": "expert_synthesis"
+                }
             )
             self.history.add_message(assistant_message)
             
             await self.emit_status("generating_answer", status="completed", progress=1.0)
             
         except Exception as e:
-            error_msg = f"生成回答时发生错误: {str(e)}"
-            await self.emit_error("ANSWER_GENERATION_ERROR", error_msg)
-            self.final_answer = f"抱歉，{error_msg}"
+            error_msg = f"生成专业分析时发生错误: {str(e)}"
+            self.logger.error(error_msg)
+            
+            # 生成备用回答
+            try:
+                results_context = self._build_results_context()
+                fallback_answer = self._generate_basic_answer(user_question, results_context)
+                self.final_answer = fallback_answer
+                
+                await self.emit_content(f"\n⚠️ {error_msg}\n")
+                await self.emit_content("已切换到基础分析模式：\n\n")
+                await self.emit_content(fallback_answer)
+                
+            except Exception as fallback_error:
+                # 最后的兜底方案
+                self.final_answer = "很抱歉，我目前无法为您提供完整的分析。这可能是由于系统负载或网络问题。请稍后再试，或者重新描述您的问题。"
+                await self.emit_error("ANSWER_GENERATION_ERROR", self.final_answer)
+    
+    def _generate_basic_answer(self, user_question: str, results_context: str) -> str:
+        """生成基础回答作为备用方案"""
+        basic_answer = f"""
+## 基础分析回答
+
+**您的问题：** {user_question}
+
+**基于检索信息的回答：**
+
+根据我们收集到的信息，针对您的问题，可以从以下几个方面来回答：
+
+### 核心信息
+{self._extract_key_information(results_context)}
+
+### 详细说明
+{self._extract_detailed_information(results_context)}
+
+### 参考来源
+{self._extract_source_references(results_context)}
+
+---
+*注：这是基础分析模式的回答。如需更深入的专业分析，请重新提问。*
+"""
+        return basic_answer
+    
+    def _extract_key_information(self, results_context: str) -> str:
+        """从检索结果中提取关键信息"""
+        if not results_context or results_context.strip() == "无检索结果":
+            return "暂时没有获取到相关信息。"
+        
+        # 简单提取前300字符作为核心信息
+        key_info = results_context[:300]
+        if len(results_context) > 300:
+            key_info += "..."
+        
+        return key_info
+    
+    def _extract_detailed_information(self, results_context: str) -> str:
+        """从检索结果中提取详细信息"""
+        if not results_context or results_context.strip() == "无检索结果":
+            return "由于信息获取限制，无法提供详细说明。建议您尝试更具体的问题描述或稍后再试。"
+        
+        # 提取更多内容作为详细信息
+        detailed_info = results_context[300:800] if len(results_context) > 300 else "详细信息正在处理中..."
+        
+        return detailed_info
+    
+    def _extract_source_references(self, results_context: str) -> str:
+        """从检索结果中提取来源引用"""
+        sources = []
+        
+        # 简单的来源提取逻辑
+        for task_type, result in self.task_results.items():
+            if "error" not in result:
+                type_name = {"online_search": "在线搜索", "knowledge_search": "知识库", "lightrag_search": "知识图谱"}.get(task_type, task_type)
+                sources.append(f"- {type_name}: 已检索相关信息")
+        
+        return "\n".join(sources) if sources else "- 系统内部知识库"
     
     async def _execute_online_search(self, query: str) -> Dict[str, Any]:
         """执行在线搜索"""
@@ -591,39 +662,13 @@ class WorkflowTask(BaseConversationTask):
             if len(self.knowledge_bases) == 1:
                 return self.knowledge_bases[0].get('name', 'test')
             
-            # 构建知识库描述
-            kb_list = []
-            for kb in self.knowledge_bases:
-                kb_name = kb.get('name', '未知')
-                kb_desc = kb.get('description', '无描述')
-                kb_list.append(f'"{kb_name}": {kb_desc}')
-            
-            kb_descriptions = "\n".join(kb_list)
-            
-            # 构建选择提示
-            selection_prompt = f"""
-            根据用户的查询问题，选择最合适的知识库进行检索。
-            
-            用户查询：{query}
-            
-            可用的知识库：
-            {kb_descriptions}
-            
-            请分析用户查询的内容和意图，选择最相关的知识库。
-            
-            返回JSON格式：
-            {{
-                "collection_name": "选择的知识库名称",
-                "reason": "选择这个知识库的原因（简短说明）"
-            }}
-            
-            注意：collection_name必须是上述知识库列表中的某个名称。
-            """
+            # 使用新的知识库选择提示词
+            selection_prompt = build_knowledge_base_selection_prompt(query, self.knowledge_bases)
             
             # 调用LLM选择知识库
             result = await self.llm_service.generate_json_response(
                 selection_prompt,
-                temperature=0.1  # 使用较低的温度以获得更确定的选择
+                temperature=PromptConfig.SELECTION_TEMPERATURE
             )
             
             if result and isinstance(result, dict):
@@ -640,11 +685,19 @@ class WorkflowTask(BaseConversationTask):
                         await self.emit_content(f"   选择原因: {reason}")
                     return selected_name
                 else:
-                    self.logger.warning(f"LLM选择了无效的知识库: {selected_name}")
-                    return None
+                    self.logger.warning(f"LLM选择了无效的知识库: {selected_name}，可用选项: {valid_names}")
+                    # 如果LLM选择了无效名称，使用第一个可用的知识库
+                    fallback_kb = valid_names[0] if valid_names else "test"
+                    self.logger.info(f"回退到第一个可用知识库: {fallback_kb}")
+                    await self.emit_content(f"\n⚠️ LLM选择了无效的知识库名称 '{selected_name}'，已自动选择: {fallback_kb}")
+                    return fallback_kb
             else:
                 self.logger.warning("LLM未能返回有效的知识库选择")
-                return None
+                # 返回第一个可用的知识库
+                valid_names = [kb.get('name') for kb in self.knowledge_bases]
+                fallback_kb = valid_names[0] if valid_names else "test"
+                self.logger.info(f"使用第一个可用知识库作为回退: {fallback_kb}")
+                return fallback_kb
                 
         except Exception as e:
             self.logger.error(f"选择知识库时发生错误: {str(e)}")
@@ -658,7 +711,13 @@ class WorkflowTask(BaseConversationTask):
             self.logger.info(f"LightRAG搜索成功，获得 {len(results)} 个结果")
             return {"type": "lightrag_search", "query": query, "results": results}
         except Exception as e:
-            error_msg = f"LightRAG搜索失败: {str(e)}"
+            # 更安全的异常消息提取，避免访问不存在的键
+            try:
+                error_msg = f"LightRAG搜索失败: {str(e)}"
+            except Exception as str_error:
+                # 如果str(e)失败，提供备用错误消息
+                error_msg = f"LightRAG搜索失败: {type(e).__name__}异常，详情: {repr(e)}"
+            
             self.logger.error(error_msg)
             return {"type": "lightrag_search", "query": query, "error": error_msg}
     
@@ -787,6 +846,20 @@ class WorkflowTask(BaseConversationTask):
             context_parts.append(f"{msg.role}: {msg.content}")
         
         return "\n".join(context_parts) if context_parts else "无历史对话"
+    
+    def _get_recent_user_questions(self, limit: int = 5) -> list:
+        """获取最近的用户问题列表"""
+        user_messages = self.history.get_messages_by_role("user")
+        if not user_messages:
+            return []
+        
+        # 获取最近的用户问题，排除当前问题
+        recent_questions = []
+        for msg in user_messages[-limit-1:-1]:  # 排除最后一条（当前问题）
+            if msg.content.strip():
+                recent_questions.append(msg.content.strip())
+        
+        return recent_questions
     
     async def _generate_json_with_fallback(
         self,

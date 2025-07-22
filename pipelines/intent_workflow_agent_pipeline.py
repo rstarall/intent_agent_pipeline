@@ -811,7 +811,7 @@ class Pipeline:
             error_msg = f"知识库配置格式错误: {str(e)}"
             print(f"警告: {error_msg}")
             # 使用默认配置
-            self._parsed_knowledge_bases = [{"name": "default_kb", "description": "默认知识库"}]
+            self._parsed_knowledge_bases = [{"name": "test", "description": "默认知识库"}]
 
 
 # 示例使用方法（可选）

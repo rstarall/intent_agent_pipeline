@@ -50,6 +50,10 @@ class LightRagService:
         Returns:
             List[SearchResult]: 检索结果列表
         """
+        # 检查配置
+        if not self.settings.lightrag_api_url:
+            raise Exception("LightRAG API URL未配置")
+        
         try:
             # 准备请求数据
             request_data = {
@@ -58,201 +62,138 @@ class LightRagService:
                 "only_need_context": only_need_context
             }
             
-            # 准备请求头
-            headers = {
-                "Content-Type": "application/json"
-            }
-            
-            if self.settings.lightrag_api_key:
-                headers["Authorization"] = f"Bearer {self.settings.lightrag_api_key}"
-            
-            # 检查URL是否配置
-            if not self.settings.lightrag_api_url:
-                raise Exception("LightRAG API URL未配置")
+            # 准备请求头（无需认证）
+            headers = {"Content-Type": "application/json"}
             
             # 发送请求
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/query"
             
-            self.logger.info(f"准备请求LightRAG API: {url}")
+            self.logger.info(f"请求LightRAG API: {url}")
             
-            async with session.post(
-                url,
-                headers=headers,
-                json=request_data
-            ) as response:
-                
+            async with session.post(url, headers=headers, json=request_data) as response:
                 response_text = await response.text()
                 
                 if response.status != 200:
-                    self.logger.error(f"LightRAG API返回错误状态码: {response.status}, 响应: {response_text}")
+                    self.logger.error(f"LightRAG API错误 {response.status}: {response_text}")
                     raise Exception(f"LightRAG API错误 {response.status}: {response_text}")
                 
-                # 尝试解析JSON
-                try:
-                    result = json.loads(response_text) if response_text else {}
-                except json.JSONDecodeError:
-                    self.logger.error(f"LightRAG API返回无效的JSON: {response_text}")
-                    raise Exception(f"LightRAG API返回无效的JSON响应")
+                # 解析响应
+                result = json.loads(response_text) if response_text else {}
                 
-                # 解析响应数据
-                search_results = []
-                
-                # LightRAG可能返回不同格式的数据
-                # 首先检查是否有response字段（新格式）
-                if "response" in result:
-                    # 新格式：直接返回response文本
-                    content = result["response"]
-                    # 提取引用信息
-                    references = []
-                    if "References" in content:
-                        ref_start = content.find("References")
-                        if ref_start > 0:
-                            references_text = content[ref_start:]
-                            # 保留原始内容，但记录引用
-                            import re
-                            ref_pattern = r'\* \[DC\] (.+?)(?:\n|$)'
-                            matches = re.findall(ref_pattern, references_text)
-                            references = matches
-                    
-                    search_result = SearchResult(
-                        title="LightRAG知识图谱回答",
-                        content=content,
-                        source="lightrag",
-                        score=1.0,
-                        metadata={
-                            "mode": mode,
-                            "references": references,
-                            "query": query
-                        }
-                    )
-                    search_results.append(search_result)
-                
-                # 兼容旧格式
-                elif "answer" in result:
-                    # 如果有直接答案（旧格式）
-                    search_result = SearchResult(
-                        title="LightRAG回答",
-                        content=result["answer"],
-                        source="lightrag",
-                        score=1.0,
-                        metadata={
-                            "mode": mode,
-                            "context_used": result.get("context_used", False),
-                            "reasoning_path": result.get("reasoning_path", [])
-                        }
-                    )
-                    search_results.append(search_result)
-                
-                if "contexts" in result:
-                    # 如果有上下文信息
-                    for i, context in enumerate(result["contexts"]):
-                        search_result = SearchResult(
-                            title=f"上下文 {i+1}",
-                            content=context.get("content", ""),
-                            source="lightrag_context",
-                            score=context.get("score", 0.0),
-                            metadata={
-                                "mode": mode,
-                                "entity_type": context.get("entity_type"),
-                                "relation_type": context.get("relation_type"),
-                                "context_id": context.get("id")
-                            }
-                        )
-                        search_results.append(search_result)
-                
-                if "entities" in result:
-                    # 如果有实体信息
-                    for entity in result["entities"]:
-                        search_result = SearchResult(
-                            title=f"实体: {entity.get('name', '')}",
-                            content=entity.get("description", ""),
-                            source="lightrag_entity",
-                            score=entity.get("relevance", 0.0),
-                            metadata={
-                                "mode": mode,
-                                "entity_type": entity.get("type"),
-                                "entity_id": entity.get("id"),
-                                "properties": entity.get("properties", {})
-                            }
-                        )
-                        search_results.append(search_result)
-                
-                # 检查是否真的有数据
-                has_data = any([
-                    "response" in result,  # 新增response字段检查
-                    "answer" in result,
-                    "contexts" in result,
-                    "entities" in result
-                ])
-                
-                if not has_data:
-                    self.logger.warning(
-                        "LightRAG API响应中没有找到有效数据字段",
-                        response=result,
-                        query=query,
-                        mode=mode
-                    )
-                
-                self.logger.info(
-                    "LightRAG检索完成",
-                    query=query,
-                    mode=mode,
-                    result_count=len(search_results),
-                    has_response="response" in result,
-                    has_answer="answer" in result,
-                    has_contexts="contexts" in result,
-                    has_entities="entities" in result
-                )
-                
-                return search_results
+                return self._parse_search_results(result, mode, query)
                 
         except aiohttp.ClientError as e:
             error_msg = f"LightRAG API连接失败: {str(e)}"
             self.logger.error(error_msg)
-            self.logger.error_with_context(
-                e,
-                {
-                    "query": query,
-                    "mode": mode,
-                    "api_url": self.settings.lightrag_api_url,
-                    "error_type": "connection_error"
-                }
-            )
             raise Exception(error_msg)
         except Exception as e:
-            self.logger.error_with_context(
-                e,
-                {
-                    "query": query,
+            # 如果是我们已经抛出的异常，直接重新抛出
+            if "LightRAG API" in str(e):
+                raise
+            # 其他未知异常
+            error_msg = f"LightRAG检索失败: {str(e)}"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
+    
+    def _parse_search_results(self, result: Dict, mode: str, query: str) -> List[SearchResult]:
+        """解析搜索结果"""
+        search_results = []
+        
+        # 处理新格式响应
+        if "response" in result:
+            content = result["response"]
+            references = self._extract_references(content)
+            
+            search_result = SearchResult(
+                title="LightRAG知识图谱回答",
+                content=content,
+                source="lightrag",
+                score=1.0,
+                metadata={
                     "mode": mode,
-                    "api_url": self.settings.lightrag_api_url
+                    "references": references,
+                    "query": query
                 }
             )
-            raise
+            search_results.append(search_result)
+        
+        # 处理旧格式响应
+        elif "answer" in result:
+            search_result = SearchResult(
+                title="LightRAG回答",
+                content=result["answer"],
+                source="lightrag",
+                score=1.0,
+                metadata={
+                    "mode": mode,
+                    "context_used": result.get("context_used", False),
+                    "reasoning_path": result.get("reasoning_path", [])
+                }
+            )
+            search_results.append(search_result)
+        
+        # 处理上下文信息
+        if "contexts" in result:
+            for i, context in enumerate(result["contexts"]):
+                search_result = SearchResult(
+                    title=f"上下文 {i+1}",
+                    content=context.get("content", ""),
+                    source="lightrag_context",
+                    score=context.get("score", 0.0),
+                    metadata={
+                        "mode": mode,
+                        "entity_type": context.get("entity_type"),
+                        "relation_type": context.get("relation_type"),
+                        "context_id": context.get("id")
+                    }
+                )
+                search_results.append(search_result)
+        
+        # 处理实体信息
+        if "entities" in result:
+            for entity in result["entities"]:
+                search_result = SearchResult(
+                    title=f"实体: {entity.get('name', '')}",
+                    content=entity.get("description", ""),
+                    source="lightrag_entity",
+                    score=entity.get("relevance", 0.0),
+                    metadata={
+                        "mode": mode,
+                        "entity_type": entity.get("type"),
+                        "entity_id": entity.get("id"),
+                        "properties": entity.get("properties", {})
+                    }
+                )
+                search_results.append(search_result)
+        
+        # 检查是否有有效数据
+        if not search_results:
+            self.logger.warning(f"LightRAG API响应中没有找到有效数据: {result}")
+        
+        self.logger.info(f"LightRAG检索完成: {len(search_results)}个结果")
+        return search_results
+    
+    def _extract_references(self, content: str) -> List[str]:
+        """提取引用信息"""
+        references = []
+        if "References" in content:
+            ref_start = content.find("References")
+            if ref_start > 0:
+                references_text = content[ref_start:]
+                import re
+                ref_pattern = r'\* \[DC\] (.+?)(?:\n|$)'
+                matches = re.findall(ref_pattern, references_text)
+                references = matches
+        return references
     
     async def get_entity_info(self, entity_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取实体详细信息
-        
-        Args:
-            entity_id: 实体ID
-            
-        Returns:
-            Optional[Dict[str, Any]]: 实体信息
-        """
+        """获取实体详细信息"""
         try:
-            # 准备请求头
-            headers = {}
-            if self.settings.lightrag_api_key:
-                headers["Authorization"] = f"Bearer {self.settings.lightrag_api_key}"
-            
-            # 发送请求
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/entity/{entity_id}"
             
-            async with session.get(url, headers=headers) as response:
-                
+            async with session.get(url) as response:
                 if response.status == 404:
                     return None
                 
@@ -261,46 +202,20 @@ class LightRagService:
                     raise Exception(f"LightRAG API错误 {response.status}: {error_text}")
                 
                 result = await response.json()
-                
-                self.logger.info(
-                    "获取实体信息成功",
-                    entity_id=entity_id
-                )
-                
+                self.logger.info(f"获取实体信息成功: {entity_id}")
                 return result
                 
         except Exception as e:
-            self.logger.error_with_context(
-                e,
-                {
-                    "entity_id": entity_id,
-                    "api_url": self.settings.lightrag_api_url
-                }
-            )
+            self.logger.error(f"获取实体信息失败: {str(e)}")
             raise
     
     async def get_relation_info(self, relation_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取关系详细信息
-        
-        Args:
-            relation_id: 关系ID
-            
-        Returns:
-            Optional[Dict[str, Any]]: 关系信息
-        """
+        """获取关系详细信息"""
         try:
-            # 准备请求头
-            headers = {}
-            if self.settings.lightrag_api_key:
-                headers["Authorization"] = f"Bearer {self.settings.lightrag_api_key}"
-            
-            # 发送请求
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/relation/{relation_id}"
             
-            async with session.get(url, headers=headers) as response:
-                
+            async with session.get(url) as response:
                 if response.status == 404:
                     return None
                 
@@ -309,64 +224,34 @@ class LightRagService:
                     raise Exception(f"LightRAG API错误 {response.status}: {error_text}")
                 
                 result = await response.json()
-                
-                self.logger.info(
-                    "获取关系信息成功",
-                    relation_id=relation_id
-                )
-                
+                self.logger.info(f"获取关系信息成功: {relation_id}")
                 return result
                 
         except Exception as e:
-            self.logger.error_with_context(
-                e,
-                {
-                    "relation_id": relation_id,
-                    "api_url": self.settings.lightrag_api_url
-                }
-            )
+            self.logger.error(f"获取关系信息失败: {str(e)}")
             raise
     
     async def get_graph_stats(self) -> Dict[str, Any]:
-        """
-        获取知识图谱统计信息
-        
-        Returns:
-            Dict[str, Any]: 统计信息
-        """
+        """获取知识图谱统计信息"""
         try:
-            # 准备请求头
-            headers = {}
-            if self.settings.lightrag_api_key:
-                headers["Authorization"] = f"Bearer {self.settings.lightrag_api_key}"
-            
-            # 发送请求
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/stats"
             
-            async with session.get(url, headers=headers) as response:
-                
+            async with session.get(url) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"LightRAG API错误 {response.status}: {error_text}")
                 
                 result = await response.json()
-                
                 self.logger.info("获取图谱统计信息成功")
-                
                 return result
                 
         except Exception as e:
-            self.logger.error_with_context(e, {})
+            self.logger.error(f"获取图谱统计信息失败: {str(e)}")
             raise
     
     async def health_check(self) -> bool:
-        """
-        检查LightRAG服务健康状态
-        
-        Returns:
-            bool: 服务是否健康
-        """
+        """检查LightRAG服务健康状态"""
         try:
             session = await self._get_session()
             url = f"{self.settings.lightrag_api_url.rstrip('/')}/health"

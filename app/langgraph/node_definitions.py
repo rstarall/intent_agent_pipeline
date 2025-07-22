@@ -377,7 +377,12 @@ class NodeDefinitions:
             results = await self.lightrag_service.search_lightrag(query, mode="mix")
             return [result.to_dict() for result in results]
         except Exception as e:
-            self.logger.error(f"LightRAG搜索失败: {str(e)}")
+            # 更安全的异常消息提取
+            try:
+                error_detail = str(e)
+            except Exception:
+                error_detail = f"{type(e).__name__}异常"
+            self.logger.error(f"LightRAG搜索失败: {error_detail}")
             return []
     
     async def _generate_summary(self, result_type: str, results: List[Dict[str, Any]], user_question: str) -> str:

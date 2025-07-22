@@ -643,7 +643,13 @@ class AgentTask(BaseConversationTask):
             self.logger.info(f"Agent模式 - LightRAG搜索成功，获得 {len(results)} 个结果")
             return {"type": "lightrag_search", "query": query, "results": results}
         except Exception as e:
-            error_msg = f"LightRAG搜索失败: {str(e)}"
+            # 更安全的异常消息提取，避免访问不存在的键
+            try:
+                error_msg = f"LightRAG搜索失败: {str(e)}"
+            except Exception as str_error:
+                # 如果str(e)失败，提供备用错误消息
+                error_msg = f"LightRAG搜索失败: {type(e).__name__}异常，详情: {repr(e)}"
+            
             self.logger.error(f"Agent模式 - {error_msg}")
             return {"type": "lightrag_search", "query": query, "error": error_msg}
     

@@ -11,7 +11,7 @@ services:
     container_name: intent-agent-pipeline-dev
     ports:
       - "8888:8000"
-    env_file:
+    env_file: # 会覆盖宿主机的变量
       - ../.env  # 显式指定.env文件
     environment:
       # 应用配置
@@ -21,29 +21,29 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=8000
       
-      # OpenAI配置
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-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}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      # # OpenAI配置 会从宿主机读取环境变量
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+      # - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
       
-      # 知识库配置
-      - KNOWLEDGE_API_URL=${KNOWLEDGE_API_URL:-http://117.50.252.245:3000}
-      - KNOWLEDGE_API_KEY=${KNOWLEDGE_API_KEY}
+      # # 知识库配置
+      # - KNOWLEDGE_API_URL=${KNOWLEDGE_API_URL:-http://117.50.252.245:3000}
+      # - KNOWLEDGE_API_KEY=${KNOWLEDGE_API_KEY}
       
-      # LightRAG配置
-      - LIGHTRAG_API_URL=${LIGHTRAG_API_URL:-http://117.50.252.245:9621}
-      - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY}
+      # # LightRAG配置
+      # - LIGHTRAG_API_URL=${LIGHTRAG_API_URL:-http://117.50.252.245:9621}
+      # - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY}
       
-      # 搜索引擎配置
-      - SEARCH_ENGINE_API_KEY=${SEARCH_ENGINE_API_KEY}
-      - SEARCH_ENGINE_URL=${SEARCH_ENGINE_URL:-http://117.50.252.245:8081}
+      # # 搜索引擎配置
+      # - SEARCH_ENGINE_API_KEY=${SEARCH_ENGINE_API_KEY}
+      # - SEARCH_ENGINE_URL=${SEARCH_ENGINE_URL:-http://117.50.252.245:8081}
       
-      # Redis配置
-      - REDIS_HOST=redis-dev
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - REDIS_PASSWORD=
+      # # Redis配置
+      # - REDIS_HOST=redis-dev
+      # - REDIS_PORT=6379
+      # - REDIS_DB=0
+      # - REDIS_PASSWORD=
       
       # 性能配置
       - MAX_WORKERS=5
