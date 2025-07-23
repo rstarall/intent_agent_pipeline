@@ -52,6 +52,14 @@ class WorkflowTask(BaseConversationTask):
     async def execute(self) -> None:
         """执行工作流的主要逻辑"""
         try:
+            # DEBUG: 打印当前的知识库配置
+            print("\n" + "="*80)
+            print("[DEBUG] WorkflowTask.execute 开始执行:")
+            print(f"  conversation_id: {self.conversation_id}")
+            print(f"  knowledge_bases: {self.knowledge_bases}")
+            print(f"  knowledge_api_url: {self.knowledge_api_url}")
+            print("="*80 + "\n")
+            
             # 获取用户最新问题
             user_messages = self.history.get_messages_by_role("user")
             if not user_messages:
@@ -595,6 +603,13 @@ class WorkflowTask(BaseConversationTask):
                     collection_name = "test"
                     self.logger.warning("知识库选择失败，使用默认知识库: test")
                 
+                # 最终验证：确保不会使用无效的知识库名称
+                valid_names = [kb.get('name') for kb in self.knowledge_bases] if self.knowledge_bases else []
+                if collection_name not in valid_names and collection_name != "test":
+                    self.logger.warning(f"检测到无效的知识库名称 '{collection_name}'，强制使用 'test'")
+                    await self.emit_content(f"\n⚠️ 最终验证发现知识库名称 '{collection_name}' 无效，已强制使用默认库 'test'")
+                    collection_name = "test"
+                
                 self.logger.info(f"使用query_doc方法，collection: {collection_name}")
                 
                 # 尝试使用选定的知识库，如果失败则回退到默认值
@@ -650,17 +665,31 @@ class WorkflowTask(BaseConversationTask):
     async def _select_knowledge_base(self, query: str) -> Optional[str]:
         """智能选择最合适的知识库"""
         try:
-            # 打印当前的知识库配置
+            # 打印当前的知识库配置，便于调试
+            self.logger.info(f"开始知识库选择流程，查询: {query}")
             self.logger.info(f"当前知识库配置: {self.knowledge_bases}")
+            
+            # 向用户显示调试信息
+            await self.emit_content(f"\n🔍 **知识库选择调试信息**")
+            await self.emit_content(f"   查询内容: {query}")
+            await self.emit_content(f"   可用知识库数量: {len(self.knowledge_bases) if self.knowledge_bases else 0}")
             
             # 如果没有配置知识库，直接返回默认值
             if not self.knowledge_bases or len(self.knowledge_bases) == 0:
                 self.logger.info("没有配置知识库，使用默认值: test")
+                await self.emit_content(f"   未配置知识库，使用默认: test")
                 return "test"
+            
+            # 显示可用的知识库列表
+            kb_names = [kb.get('name', '未知') for kb in self.knowledge_bases]
+            await self.emit_content(f"   可用知识库: {', '.join(kb_names)}")
             
             # 如果只有一个知识库，直接使用
             if len(self.knowledge_bases) == 1:
-                return self.knowledge_bases[0].get('name', 'test')
+                selected_name = self.knowledge_bases[0].get('name', 'test')
+                self.logger.info(f"只有一个知识库，直接选择: {selected_name}")
+                await self.emit_content(f"   仅有一个知识库，直接选择: {selected_name}")
+                return selected_name
             
             # 使用新的知识库选择提示词
             selection_prompt = build_knowledge_base_selection_prompt(query, self.knowledge_bases)
@@ -672,12 +701,15 @@ class WorkflowTask(BaseConversationTask):
             )
             
             if result and isinstance(result, dict):
-                selected_name = result.get("collection_name")
+                selected_name = result.get("collection_name", "").strip()
                 reason = result.get("reason", "")
                 
                 # 验证选择的知识库是否存在
                 valid_names = [kb.get('name') for kb in self.knowledge_bases]
-                if selected_name in valid_names:
+                self.logger.info(f"LLM返回的知识库名称: '{selected_name}', 可用选项: {valid_names}")
+                
+                # 严格验证选择的名称
+                if selected_name and selected_name in valid_names:
                     self.logger.info(f"智能选择知识库: {selected_name}, 原因: {reason}")
                     # 向前端发送选择结果
                     await self.emit_content(f"\n🎯 **知识库选择**: {selected_name}")
@@ -685,18 +717,27 @@ class WorkflowTask(BaseConversationTask):
                         await self.emit_content(f"   选择原因: {reason}")
                     return selected_name
                 else:
-                    self.logger.warning(f"LLM选择了无效的知识库: {selected_name}，可用选项: {valid_names}")
-                    # 如果LLM选择了无效名称，使用第一个可用的知识库
+                    # 检查是否选择了常见的无效名称
+                    invalid_names = ["default", "default_kb", "默认", "default_collection"]
+                    if selected_name in invalid_names:
+                        self.logger.warning(f"LLM使用了禁止的知识库名称: '{selected_name}'，这是常见的错误")
+                        await self.emit_content(f"\n⚠️ 系统检测到无效的知识库名称 '{selected_name}'")
+                    else:
+                        self.logger.warning(f"LLM选择了无效的知识库: '{selected_name}'，可用选项: {valid_names}")
+                        await self.emit_content(f"\n⚠️ LLM选择了无效的知识库名称 '{selected_name}'")
+                    
+                    # 使用第一个可用的知识库作为回退
                     fallback_kb = valid_names[0] if valid_names else "test"
-                    self.logger.info(f"回退到第一个可用知识库: {fallback_kb}")
-                    await self.emit_content(f"\n⚠️ LLM选择了无效的知识库名称 '{selected_name}'，已自动选择: {fallback_kb}")
+                    self.logger.info(f"自动回退到第一个可用知识库: {fallback_kb}")
+                    await self.emit_content(f"   已自动选择: {fallback_kb}")
                     return fallback_kb
             else:
-                self.logger.warning("LLM未能返回有效的知识库选择")
+                self.logger.warning("LLM未能返回有效的知识库选择结果")
                 # 返回第一个可用的知识库
                 valid_names = [kb.get('name') for kb in self.knowledge_bases]
                 fallback_kb = valid_names[0] if valid_names else "test"
                 self.logger.info(f"使用第一个可用知识库作为回退: {fallback_kb}")
+                await self.emit_content(f"\n⚠️ 知识库选择失败，使用默认选择: {fallback_kb}")
                 return fallback_kb
                 
         except Exception as e:

@@ -55,7 +55,16 @@ async def create_conversation(
         if request.conversation_id:
             log_info += f", conversation_id={request.conversation_id}"
         logger.info(log_info)
-        print(f"[DEBUG] {log_info}")  # 添加print确保日志输出
+        
+        # DEBUG: 打印完整的请求参数
+        print("\n" + "="*80)
+        print("[DEBUG] 创建对话API接收到的参数:")
+        print(f"  user_id: {request.user_id}")
+        print(f"  mode: {request.mode}")
+        print(f"  conversation_id: {request.conversation_id}")
+        print(f"  knowledge_bases: {request.knowledge_bases}")
+        print(f"  knowledge_api_url: {request.knowledge_api_url}")
+        print("="*80 + "\n")
         
         # 创建对话 - 传递可选的conversation_id和知识库配置
         conversation_id = pipeline.create_conversation(
@@ -75,7 +84,6 @@ async def create_conversation(
         }
         
         logger.info(f"对话创建成功: {conversation_id}")
-        print(f"[DEBUG] 对话创建成功: {conversation_id}")
         
         return APIResponse.success_response(
             message="对话创建成功",
@@ -92,7 +100,6 @@ async def create_conversation(
                 "conversation_id": request.conversation_id
             }
         )
-        print(f"[ERROR] 创建对话失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"创建对话失败: {str(e)}",
@@ -119,7 +126,6 @@ async def send_message(
     """
     try:
         logger.info(f"发送消息: conversation_id={conversation_id}")
-        print(f"[DEBUG] 发送消息: conversation_id={conversation_id}")
         
         # 验证对话ID匹配
         if request.conversation_id != conversation_id:
@@ -159,7 +165,6 @@ async def send_message(
         }
         
         logger.info(f"消息处理完成: {conversation_id}")
-        print(f"[DEBUG] 消息处理完成: {conversation_id}")
         
         return APIResponse.success_response(
             message="消息发送成功",
@@ -175,7 +180,6 @@ async def send_message(
                 "message_length": len(request.message) if request.message else 0
             }
         )
-        print(f"[ERROR] 发送消息失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"发送消息失败: {str(e)}",
@@ -207,7 +211,16 @@ async def stream_chat(
         user_token = token or request.get_user_token()
         
         logger.info(f"开始流式聊天: conversation_id={conversation_id}")
-        print(f"[DEBUG] 开始流式聊天: conversation_id={conversation_id}")
+        
+        # DEBUG: 打印流式聊天请求参数
+        print("\n" + "="*80)
+        print("[DEBUG] 流式聊天API接收到的参数:")
+        print(f"  conversation_id: {conversation_id}")
+        print(f"  message: {request.message[:100]}..." if len(request.message) > 100 else f"  message: {request.message}")
+        print(f"  user_id: {request.user_id}")
+        print(f"  knowledge_bases: {request.knowledge_bases}")
+        print(f"  knowledge_api_url: {request.knowledge_api_url}")
+        print("="*80 + "\n")
         
         # 验证对话ID匹配
         if request.conversation_id != conversation_id:
@@ -226,7 +239,6 @@ async def stream_chat(
         async def generate_stream():
             """生成流式响应"""
             try:
-                print(f"[DEBUG] 开始生成流式响应: {conversation_id}")
                 
                 # 直接处理流式响应，不再使用复杂的双重监听机制
                 response_count = 0
@@ -247,18 +259,15 @@ async def stream_chat(
                     response_data = stream_response.to_dict()
                     json_str = json.dumps(response_data, ensure_ascii=False, indent=None, separators=(',', ':'))
                     
-                    print(f"[DEBUG] 流式响应 #{response_count}: {response_data.get('type', 'unknown')}")
                     
                     yield f"data: {json_str}\n\n"
                     
                     # 检查是否收到内容
                     if response_data.get('type') == 'content' and response_data.get('content'):
                         content_received = True
-                        print(f"[DEBUG] 收到内容响应: {len(response_data.get('content', ''))}")
                 
                 # 检查是否收到了任何内容
                 if not content_received:
-                    print("[DEBUG] 没有收到内容响应，发送提示信息")
                     no_content_data = {
                         'type': 'content',
                         'content': '⚠️ 后端处理完成，但没有返回具体内容。可能是：\n1. 后端配置问题\n2. 模型未正确加载\n3. 任务类型不支持\n\n请检查后端日志或联系管理员。',
@@ -285,7 +294,6 @@ async def stream_chat(
                 yield "data: [DONE]\n\n"
                 
                 logger.info(f"流式聊天完成: {conversation_id}, 响应数量: {response_count}, 内容接收: {content_received}")
-                print(f"[DEBUG] 流式聊天完成: {conversation_id}, 响应数量: {response_count}, 内容接收: {content_received}")
                 
             except Exception as e:
                 logger.error_with_context(
@@ -295,7 +303,6 @@ async def stream_chat(
                         "conversation_id": conversation_id
                     }
                 )
-                print(f"[ERROR] 流式处理错误: {str(e)}")
                 
                 # 发送错误响应
                 error_data = {
@@ -330,7 +337,6 @@ async def stream_chat(
                 "message_length": len(request.message) if request.message else 0
             }
         )
-        print(f"[ERROR] 流式聊天失败: {str(e)}")
         
         raise HTTPException(
             status_code=500,
@@ -355,7 +361,6 @@ async def get_conversation_history(
     """
     try:
         logger.info(f"获取对话历史: {conversation_id}")
-        print(f"[DEBUG] 获取对话历史: {conversation_id}")
         
         # 检查对话是否存在
         if conversation_id not in pipeline.active_conversations:
@@ -388,7 +393,6 @@ async def get_conversation_history(
                 "conversation_id": conversation_id
             }
         )
-        print(f"[ERROR] 获取对话历史失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"获取对话历史失败: {str(e)}",
@@ -413,7 +417,6 @@ async def get_conversation_summary(
     """
     try:
         logger.info(f"获取对话摘要: {conversation_id}")
-        print(f"[DEBUG] 获取对话摘要: {conversation_id}")
         
         # 检查对话是否存在
         if conversation_id not in pipeline.active_conversations:
@@ -438,7 +441,6 @@ async def get_conversation_summary(
                 "conversation_id": conversation_id
             }
         )
-        print(f"[ERROR] 获取对话摘要失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"获取对话摘要失败: {str(e)}",
@@ -463,7 +465,6 @@ async def list_conversations(
     """
     try:
         logger.info(f"列出活跃对话: user_id={user_id}")
-        print(f"[DEBUG] 列出活跃对话: user_id={user_id}")
         
         # 获取对话列表
         conversations = pipeline.list_active_conversations(user_id)
@@ -488,7 +489,6 @@ async def list_conversations(
                 "user_id": user_id
             }
         )
-        print(f"[ERROR] 获取对话列表失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"获取对话列表失败: {str(e)}",
@@ -513,7 +513,6 @@ async def close_conversation(
     """
     try:
         logger.info(f"关闭对话会话: {conversation_id}")
-        print(f"[DEBUG] 关闭对话会话: {conversation_id}")
         
         # 关闭对话
         success = pipeline.close_conversation(conversation_id)
@@ -537,7 +536,6 @@ async def close_conversation(
                 "conversation_id": conversation_id
             }
         )
-        print(f"[ERROR] 关闭对话失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"关闭对话失败: {str(e)}",
@@ -560,7 +558,6 @@ async def get_pipeline_statistics(
     """
     try:
         logger.info("获取Pipeline统计信息")
-        print("[DEBUG] 获取Pipeline统计信息")
         
         # 获取统计信息
         stats = pipeline.get_statistics()
@@ -572,7 +569,6 @@ async def get_pipeline_statistics(
         
     except Exception as e:
         logger.error_with_context(e, {"operation": "get_pipeline_statistics"})
-        print(f"[ERROR] 获取统计信息失败: {str(e)}")
         
         return APIResponse.error_response(
             message=f"获取统计信息失败: {str(e)}",

@@ -292,26 +292,31 @@ def build_knowledge_base_selection_prompt(query: str, knowledge_bases: list) -> 
     
     kb_descriptions = "\n".join(kb_list)
     valid_names = [kb.get('name', '') for kb in knowledge_bases]
+    valid_names_str = ', '.join([f'"{name}"' for name in valid_names])
     
     return f"""
-根据用户的查询问题，选择最合适的知识库进行检索。
+根据用户的查询问题，从以下可用知识库中选择最合适的一个进行检索。
 
 用户查询：{query}
 
 可用的知识库：
 {kb_descriptions}
 
-请分析用户查询的内容和意图，选择最相关的知识库。
+**严格约束：**
+1. 你必须且只能从以下知识库名称中选择一个：{valid_names_str}
+2. 不允许使用任何其他名称，包括 "default"、"default_kb"、"默认"等
+3. 如果不确定，请选择 "{valid_names[0] if valid_names else 'test'}"
+
+请分析用户查询的内容和意图，然后选择最相关的知识库。
 
 返回JSON格式：
 {{
-    "collection_name": "选择的知识库名称",
+    "collection_name": "必须是上述列表中的准确名称",
     "reason": "选择这个知识库的原因（简短说明）"
 }}
 
-【重要】collection_name必须严格从上述可用知识库列表中选择，不能使用列表之外的任何名称！
-可选择的知识库名称仅限于：{', '.join(valid_names)}
-如果不确定选择哪个，请选择第一个知识库。
+**再次强调：collection_name 必须严格匹配以下选项之一：{valid_names_str}**
+**禁止使用任何不在此列表中的名称！**
 """
 
 

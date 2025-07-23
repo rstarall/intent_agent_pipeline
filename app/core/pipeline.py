@@ -47,6 +47,15 @@ class PipelineInterface:
         Returns:
             conversation_id: 对话唯一标识
         """
+        # DEBUG: 打印接收到的参数
+        print("\n" + "="*80)
+        print("[DEBUG] PipelineInterface.create_conversation 接收到的参数:")
+        print(f"  user_id: {user_id}")
+        print(f"  mode: {mode}")
+        print(f"  conversation_id: {conversation_id}")
+        print(f"  knowledge_bases: {knowledge_bases}")
+        print(f"  knowledge_api_url: {knowledge_api_url}")
+        print("="*80 + "\n")
         # 使用提供的conversation_id或生成新的
         if conversation_id:
             # 检查conversation_id是否已存在
@@ -68,11 +77,14 @@ class PipelineInterface:
             # 如果提供了知识库配置，替换默认配置
             if knowledge_bases:
                 task.knowledge_bases = knowledge_bases
-            # 否则使用默认配置（已在BaseConversationTask中设置）
+                print(f"[DEBUG] 设置任务知识库配置: {knowledge_bases}")
+            else:
+                print(f"[DEBUG] 未提供知识库配置，使用默认配置: {task.knowledge_bases}")
             
             # 如果提供了知识库API URL，设置到任务中
             if knowledge_api_url:
                 task.knowledge_api_url = knowledge_api_url
+                print(f"[DEBUG] 设置知识库API URL: {knowledge_api_url}")
             
             # 保存到活跃对话字典
             self.active_conversations[final_conversation_id] = task
@@ -145,10 +157,16 @@ class PipelineInterface:
             
             # 如果提供了知识库配置，更新任务中的配置（替换默认配置）
             if knowledge_bases:
+                print(f"[DEBUG] send_message: 更新任务知识库配置")
+                print(f"  原配置: {task.knowledge_bases}")
                 task.knowledge_bases = knowledge_bases
+                print(f"  新配置: {task.knowledge_bases}")
+            else:
+                print(f"[DEBUG] send_message: 未提供知识库配置，使用任务当前配置: {task.knowledge_bases}")
                 
             # 如果提供了知识库API URL，更新任务中的URL
             if knowledge_api_url:
+                print(f"[DEBUG] send_message: 更新知识库API URL: {knowledge_api_url}")
                 task.knowledge_api_url = knowledge_api_url
             
             # 添加当前用户消息到历史

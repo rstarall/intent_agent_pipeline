@@ -169,8 +169,6 @@ class BaseConversationTask(ABC):
         self.user_token = user_token
         
         try:
-            print(f"[DEBUG] 开始流式响应: {self.conversation_id}")
-            
             # 启动任务执行
             execution_task = asyncio.create_task(self._execute_task())
             
@@ -183,18 +181,15 @@ class BaseConversationTask(ABC):
                             self._response_queue.get(),
                             timeout=0.5
                         )
-                        print(f"[DEBUG] 发送响应: {response.response_type}")
                         yield response
                     except asyncio.TimeoutError:
                         # 超时检查任务状态
                         if execution_task.done():
-                            print(f"[DEBUG] 任务执行完成")
                             self._task_completed = True
                             
                             # 检查任务是否有异常
                             if execution_task.exception():
                                 self._task_error = execution_task.exception()
-                                print(f"[DEBUG] 任务执行异常: {self._task_error}")
                             
                             # 处理剩余的响应
                             while not self._response_queue.empty():
@@ -213,7 +208,6 @@ class BaseConversationTask(ABC):
                             continue
                             
                 except Exception as e:
-                    print(f"[DEBUG] 处理响应时出错: {str(e)}")
                     self.logger.error(f"处理响应时出错: {str(e)}")
                     break
             
@@ -226,8 +220,6 @@ class BaseConversationTask(ABC):
                 )
                 yield error_response
             
-            print(f"[DEBUG] 流式响应完成: {self.conversation_id}")
-            
         except Exception as e:
             self.logger.error_with_context(
                 e,
@@ -237,7 +229,6 @@ class BaseConversationTask(ABC):
                     "status": self.status
                 }
             )
-            print(f"[DEBUG] 流式响应异常: {str(e)}")
             
             # 发送错误响应
             error_response = StreamResponse.create_error_response(
@@ -249,21 +240,17 @@ class BaseConversationTask(ABC):
             
         finally:
             self._is_streaming = False
-            print(f"[DEBUG] 流式响应结束: {self.conversation_id}")
     
     async def _execute_task(self) -> None:
         """执行任务的内部方法"""
         try:
-            print(f"[DEBUG] 开始执行任务: {self.conversation_id}")
             self.update_status("running")
             await self.execute()
             self.update_status("completed")
-            print(f"[DEBUG] 任务执行完成: {self.conversation_id}")
             
         except Exception as e:
             self.update_status("error")
             self._task_error = e
-            print(f"[DEBUG] 任务执行出错: {str(e)}")
             self.logger.error_with_context(
                 e,
                 {
@@ -279,7 +266,6 @@ class BaseConversationTask(ABC):
             )
         finally:
             self._task_completed = True
-            print(f"[DEBUG] 任务标记为完成: {self.conversation_id}")
     
     @abstractmethod
     async def execute(self) -> None:
