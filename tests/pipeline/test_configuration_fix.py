@@ -11,7 +11,7 @@ from typing import Dict, Any
 
 # 导入配置相关模块
 from app.config import get_settings
-from app.models.enums import WorkflowStageType, ResponseTypeType
+from app.models.enums import WorkflowStage, ResponseType
 
 
 class TestConfigurationFix:

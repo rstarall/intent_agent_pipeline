@@ -8,13 +8,13 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 
-from .enums import MessageRole, MessageRoleType
+from .enums import MessageRole
 
 
 class Message(BaseModel):
     """消息数据模型"""
     
-    role: MessageRoleType = Field(..., description="消息角色")
+    role: str = Field(..., description="消息角色")
     content: str = Field(..., description="消息内容")
     timestamp: datetime = Field(default_factory=datetime.now, description="时间戳")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
@@ -61,7 +61,7 @@ class ConversationHistory(BaseModel):
         """获取最近的消息"""
         return self.messages[-limit:] if limit > 0 else self.messages
     
-    def get_messages_by_role(self, role: MessageRoleType) -> List[Message]:
+    def get_messages_by_role(self, role: str) -> List[Message]:
         """根据角色获取消息"""
         return [msg for msg in self.messages if msg.role == role]
     

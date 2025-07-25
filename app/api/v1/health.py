@@ -50,7 +50,7 @@ async def health_check():
             services={}
         )
         
-        logger.info("健康检查请求")
+        # 删除健康检查的INFO日志，避免冗余
         
         return response
         
@@ -78,7 +78,7 @@ async def detailed_health_check(
         APIResponse: 详细健康状态
     """
     try:
-        logger.info("详细健康检查请求")
+        # 删除详细健康检查的INFO日志
         
         # 检查各个服务的健康状态
         services_status = {}
@@ -185,7 +185,7 @@ async def service_health_check(service_name: str):
         APIResponse: 服务健康状态
     """
     try:
-        logger.info(f"检查服务健康状态: {service_name}")
+        # 删除服务健康检查的INFO日志
         
         service_healthy = False
         service_info = {}
@@ -261,7 +261,7 @@ async def health_stats():
         APIResponse: 系统统计信息
     """
     try:
-        logger.info("获取系统统计信息")
+        # 删除系统统计信息的INFO日志
         
         settings = get_settings()
         

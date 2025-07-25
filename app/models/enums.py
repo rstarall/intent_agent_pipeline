@@ -59,11 +59,11 @@ class WorkflowStage(Enum):
     ONLINE_SEARCH = "online_search"               # 在线搜索阶段
     KNOWLEDGE_SEARCH = "knowledge_search"         # 知识库搜索阶段
     LIGHTRAG_QUERY = "lightrag_query"             # LightRAG查询阶段
-    RESPONSE_GENERATION = "response_generation"   # 响应生成阶段
+    REPORT_GENERATION = "report_generation"       # 报告生成阶段(workflow)
+    RESPONSE_GENERATION = "response_generation"   # 响应生成阶段(Agent)
     GENERATING_ANSWER = "generating_answer"       # 结果整合与回答
-    PROCESSING = "processing"                     # 处理阶段
-    STREAMING = "streaming"                       # 流式响应阶段
-    COMPLETED = "completed"                       # 完成阶段
+    AGENT_WORKFLOW = "agent_workflow"             # Agent工作流阶段
+
 
 
 class SearchType(Enum):
@@ -82,13 +82,4 @@ class LightRagMode(Enum):
     MIX = "mix"              # 混合模式（默认）
 
 
-# 类型别名定义
-TaskStatusType = Literal["pending", "running", "completed", "error", "cancelled"]
-ResponseTypeType = Literal["status", "content", "progress", "error"]
-MessageRoleType = Literal["user", "assistant", "system"]
-ExecutionModeType = Literal["workflow", "agent"]
-AgentTypeType = Literal["master_agent", "query_optimizer", "online_search", 
-                       "lightrag_agent", "knowledge_search", "summary_agent", "final_output"]
-WorkflowStageType = Literal["initialization", "expanding_question", "analyzing_question", "task_scheduling", "executing_tasks", "online_search", "knowledge_search", "lightrag_query", "response_generation", "generating_answer", "processing", "streaming", "completed", "agent_workflow"]
-SearchTypeType = Literal["online_search", "knowledge_search", "lightrag_search"]
-LightRagModeType = Literal["naive", "local", "global", "hybrid", "mix"]
+

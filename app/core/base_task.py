@@ -8,12 +8,13 @@ import uuid
 import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Optional, AsyncIterator, Any
+from typing import Dict, List, Optional, AsyncIterator, Any, Union
 
 from ..models import (
     Message, ConversationHistory, StreamResponse, 
-    TaskStatus, TaskStatusType, ExecutionModeType
+    TaskStatus, ExecutionMode
 )
+from ..models.enums import WorkflowStage
 from ..config import get_logger
 
 
@@ -24,7 +25,7 @@ class BaseConversationTask(ABC):
         self,
         user_id: str,
         conversation_id: Optional[str] = None,
-        mode: ExecutionModeType = "workflow"
+        mode: str = "workflow"
     ):
         """
         初始化对话任务
@@ -42,7 +43,8 @@ class BaseConversationTask(ABC):
             user_id=user_id
         )
         self.current_stage = ""
-        self.status: TaskStatusType = "pending"
+        self.status: str = "pending"
+        self.progress: float = 0.0
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
         self.metadata: Dict[str, Any] = {}
@@ -76,7 +78,7 @@ class BaseConversationTask(ABC):
             content_length=len(message.content)
         )
     
-    def update_status(self, status: TaskStatusType) -> None:
+    def update_status(self, status: str) -> None:
         """更新任务状态"""
         old_status = self.status
         self.status = status
@@ -89,17 +91,18 @@ class BaseConversationTask(ABC):
             new_status=status
         )
     
-    def update_stage(self, stage: str) -> None:
+    def update_stage(self, stage: Union[WorkflowStage, str]) -> None:
         """更新当前阶段"""
         old_stage = self.current_stage
-        self.current_stage = stage
+        # 如果传入的是枚举，取其值；如果是字符串，直接使用
+        self.current_stage = stage.value if isinstance(stage, WorkflowStage) else stage
         self.updated_at = datetime.now()
         
         self.logger.info(
             "任务阶段更新",
             conversation_id=self.conversation_id,
             old_stage=old_stage,
-            new_stage=stage
+            new_stage=self.current_stage
         )
     
     async def emit_response(self, response: StreamResponse) -> None:
@@ -114,32 +117,42 @@ class BaseConversationTask(ABC):
                 stage=response.stage
             )
     
-    async def emit_status(
-        self,
-        stage: str,
-        status: TaskStatusType = "running",
-        progress: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """发送状态响应"""
-        response = StreamResponse.create_status_response(
+    def update_progress(self, progress: float) -> None:
+        """更新进度"""
+        self.progress = progress
+        self.updated_at = datetime.now()
+        
+        self.logger.info(
+            "任务进度更新",
             conversation_id=self.conversation_id,
-            stage=stage,
-            status=status,
-            progress=progress,
-            metadata=metadata
+            stage=self.current_stage,
+            progress=progress
         )
-        await self.emit_response(response)
     
     async def emit_content(
         self,
         content: str,
+        stage: Optional[Union[WorkflowStage, str]] = None,
+        status: Optional[str] = None,
+        progress: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> None:
         """发送内容响应"""
+        # 如果没有提供stage，使用当前阶段
+        if stage is None:
+            current_stage = self.current_stage
+        else:
+            # 如果传入的是枚举，取其值；如果是字符串，直接使用
+            current_stage = stage.value if isinstance(stage, WorkflowStage) else stage
+        
+        # 如果没有提供status，使用当前状态
+        current_status = status or self.status
         response = StreamResponse.create_content_response(
             conversation_id=self.conversation_id,
             content=content,
+            stage=current_stage,
+            status=current_status,
+            progress=progress,
             metadata=metadata
         )
         await self.emit_response(response)

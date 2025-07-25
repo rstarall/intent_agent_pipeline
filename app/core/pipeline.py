@@ -13,7 +13,7 @@ from .workflow_task import WorkflowTask
 from .agent_task import AgentTask
 from ..models import (
     Message, ConversationHistory, StreamResponse, 
-    ExecutionModeType, MessageRole
+    ExecutionMode, MessageRole
 )
 from ..config import get_logger
 
@@ -29,7 +29,7 @@ class PipelineInterface:
     def create_conversation(
         self,
         user_id: str,
-        mode: ExecutionModeType = "workflow",
+        mode: str = "workflow",
         conversation_id: Optional[str] = None,
         knowledge_bases: Optional[List[Dict[str, str]]] = None,
         knowledge_api_url: Optional[str] = None

@@ -24,6 +24,7 @@ from .prompts import (
     PromptConfig
 )
 from ..models import Message, ParallelTasksConfig, TaskConfig, SearchResult
+from ..models.enums import WorkflowStage
 from ..services import (
     KnowledgeService, LightRagService, SearchService, LLMService
 )
@@ -80,6 +81,9 @@ class WorkflowTask(BaseConversationTask):
             # 阶段3：并行任务执行
             await self._stage_3_execute_tasks()
             
+            # 阶段3.5：检索结果报告生成
+            await self._stage_3_5_generate_report()
+            
             # 阶段4：结果整合与回答
             await self._stage_4_generate_answer(user_question)
             
@@ -134,9 +138,9 @@ class WorkflowTask(BaseConversationTask):
         ):
             # 实时发送内容片段给用户
             if content_prefix:
-                await self.emit_content(f"{content_prefix}{chunk}")
+                await self.emit_content(f"{content_prefix}{chunk}", stage=self.current_stage)
             else:
-                await self.emit_content(chunk)
+                await self.emit_content(chunk, stage=self.current_stage)
             
             # 收集完整响应
             full_response += chunk
@@ -145,9 +149,9 @@ class WorkflowTask(BaseConversationTask):
     
     async def _stage_0_expand_question(self, user_question: str) -> None:
         """阶段0：问题扩写与优化"""
-        self.update_stage("expanding_question")
-        await self.emit_status("expanding_question", progress=0.05)
-        await self.emit_content("🔍 **启动问题扩写与优化...**\n")
+        self.update_stage(WorkflowStage.EXPANDING_QUESTION)
+        self.update_progress(0.05)
+        await self.emit_content("🔍 **启动问题扩写与优化...**\n", stage=WorkflowStage.EXPANDING_QUESTION, progress=0.05)
         
         # 构建历史对话上下文
         history_context = self._build_history_context()
@@ -162,7 +166,7 @@ class WorkflowTask(BaseConversationTask):
             recent_questions
         )
         
-        await self.emit_content("正在基于历史上下文进行问题扩写...\n")
+        # 删除冗余提示
         
         try:
             # 使用generate_json_response获取扩写结果
@@ -180,29 +184,34 @@ class WorkflowTask(BaseConversationTask):
             # 验证扩写质量
             if not self.expanded_question or len(self.expanded_question.strip()) < PromptConfig.MIN_EXPANSION_LENGTH:
                 self.expanded_question = user_question  # 使用原问题作为后备
-                await self.emit_content("⚠️ 问题扩写异常，使用原问题继续执行\n")
+                await self.emit_content("⚠️ 问题扩写异常，使用原问题继续执行\n", stage=WorkflowStage.EXPANDING_QUESTION)
+            else:
+                # 向前端发送扩写结果
+                await self.emit_content("## 📝 **问题扩写结果**\n", stage=WorkflowStage.EXPANDING_QUESTION)
+                await self.emit_content(f"**原始问题：** {user_question}\n\n", stage=WorkflowStage.EXPANDING_QUESTION)
+                await self.emit_content(f"**扩写问题：** {self.expanded_question}\n\n", stage=WorkflowStage.EXPANDING_QUESTION)
+                
+                # 如果有扩写理由，也一并展示
+                if expansion_reasoning:
+                    await self.emit_content(f"**扩写理由：** {expansion_reasoning}\n\n", stage=WorkflowStage.EXPANDING_QUESTION)
             
             # 显示扩写结果
-            await self.emit_content(f"**✨ 问题扩写完成**\n")
-            await self.emit_content(f"- **原始问题**: {user_question}\n")
-            await self.emit_content(f"- **扩写后问题**: {self.expanded_question}\n")
-            await self.emit_content(f"- **扩写理由**: {expansion_reasoning}\n")
-            await self.emit_content(f"- **上下文关联度**: {context_relevance}\n")
-            await self.emit_content(f"- **用户意图**: {original_intent}\n\n")
+            # 删除详细的扩写信息输出
             
         except Exception as e:
             self.logger.error_with_context(e, {"stage": "expansion", "question": user_question})
             # 如果扩写失败，使用原问题
             self.expanded_question = user_question
-            await self.emit_content("⚠️ 问题扩写失败，使用原问题继续执行\n")
+            await self.emit_content("⚠️ 问题扩写失败，使用原问题继续执行\n", stage=WorkflowStage.EXPANDING_QUESTION)
         
-        await self.emit_status("expanding_question", status="completed", progress=0.1)
+        self.update_status("completed")
+        self.update_progress(0.1)
     
     async def _stage_1_analyze_question(self, user_question: str) -> None:
         """阶段1：专家级问题分析与规划"""
-        self.update_stage("analyzing_question")
-        await self.emit_status("analyzing_question", progress=0.15)
-        await self.emit_content("🔍 **启动专家级问题分析...**\n")
+        self.update_stage(WorkflowStage.ANALYZING_QUESTION)
+        self.update_progress(0.15)
+        await self.emit_content("🔍 **启动专家级问题分析...**\n", stage=WorkflowStage.ANALYZING_QUESTION, progress=0.15)
         
         # 构建历史对话上下文
         history_context = self._build_history_context()
@@ -210,7 +219,7 @@ class WorkflowTask(BaseConversationTask):
         # 使用SOTA专家分析提示词
         analysis_prompt = build_expert_analysis_prompt(user_question, history_context)
         
-        await self.emit_content("正在进行多维度专业分析，请稍候...\n")
+        # 删除冗余提示
         
         try:
             # 使用generate_json_response获取结构化分析结果
@@ -223,37 +232,40 @@ class WorkflowTask(BaseConversationTask):
                 expert_analysis = analysis_data["expert_analysis"]
                 
                 # 格式化显示专家分析结果
-                await self.emit_content("## 🎯 **专家分析结果**\n")
-                await self.emit_content(f"{expert_analysis}\n")
+                await self.emit_content("## 🎯 **专家分析结果**\n", stage=WorkflowStage.ANALYZING_QUESTION)
+                await self.emit_content(f"{expert_analysis}\n", stage=WorkflowStage.ANALYZING_QUESTION)
                 
                 # 保存分析结果供后续阶段使用
                 self.optimized_question = user_question  # 保持原问题，因为分析已经包含了优化思路
                 self.expert_analysis = expert_analysis
                 
-                await self.emit_content("\n✅ **专家分析完成** - 已生成深度专业分析\n")
-                await self.emit_status("analyzing_question", status="completed", progress=0.25)
+                # 删除冗余提示
+                self.update_status("completed")
+                self.update_progress(0.25)
                 
             else:
                 # 分析数据格式异常，使用原始问题
                 self.logger.warning("专家分析返回数据格式异常")
                 self.optimized_question = user_question
                 self.expert_analysis = f"基于问题：{user_question}，需要进行全面的信息检索和分析。"
-                await self.emit_content("\n⚠️ 分析过程中遇到格式问题，已使用原始问题继续处理\n")
-                await self.emit_status("analyzing_question", status="completed", progress=0.25)
+                await self.emit_content("\n⚠️ 分析过程中遇到格式问题，已使用原始问题继续处理\n", stage=WorkflowStage.ANALYZING_QUESTION)
+                self.update_status("completed")
+                self.update_progress(0.25)
                 
         except Exception as e:
             # 如果专家分析失败，使用原始问题和基础分析
             self.logger.warning(f"专家分析生成失败: {str(e)}")
             self.optimized_question = user_question
             self.expert_analysis = f"针对用户问题：{user_question}，需要进行多角度的信息收集和专业分析，以提供全面准确的回答。"
-            await self.emit_content(f"\n⚠️ 专家分析过程遇到问题，已切换到基础模式继续处理\n")
-            await self.emit_status("analyzing_question", status="completed", progress=0.25)
+            await self.emit_content(f"\n⚠️ 专家分析过程遇到问题，已切换到基础模式继续处理\n", stage=WorkflowStage.ANALYZING_QUESTION)
+            self.update_status("completed")
+            self.update_progress(0.25)
     
     async def _stage_2_task_scheduling(self) -> None:
         """阶段2：智能任务分解与调度"""
-        self.update_stage("task_scheduling")
-        await self.emit_status("task_scheduling", progress=0.3)
-        await self.emit_content("📋 **启动智能任务规划...**\n")
+        self.update_stage(WorkflowStage.TASK_SCHEDULING)
+        self.update_progress(0.3)
+        await self.emit_content("📋 **启动智能任务规划...**\n", stage=WorkflowStage.TASK_SCHEDULING, progress=0.3)
         
         # 获取专家分析结果
         expert_analysis = getattr(self, 'expert_analysis', '需要进行全面的信息检索和分析')
@@ -264,7 +276,7 @@ class WorkflowTask(BaseConversationTask):
         # 使用通用任务规划提示词
         planning_prompt = build_universal_task_planning_prompt(self.optimized_question, expert_analysis, history_context)
         
-        await self.emit_content("正在设计最优检索策略，请稍候...\n")
+        # 删除冗余提示
         
         try:
             # 使用generate_json_response获取结构化任务配置
@@ -288,7 +300,7 @@ class WorkflowTask(BaseConversationTask):
                 
                 if valid_tasks:
                     # 格式化显示任务规划结果
-                    await self.emit_content("## 🎯 **检索策略规划**\n")
+                    await self.emit_content("## 🎯 **检索策略规划**\n", stage=WorkflowStage.TASK_SCHEDULING)
                     
                     type_names = {
                         "online_search": "🌐 在线搜索",
@@ -298,8 +310,8 @@ class WorkflowTask(BaseConversationTask):
                     
                     for i, task in enumerate(valid_tasks, 1):
                         type_name = type_names.get(task.type, task.type)
-                        await self.emit_content(f"**{i}. {type_name}**\n")
-                        await self.emit_content(f"   查询策略: {task.query}\n\n")
+                        await self.emit_content(f"**{i}. {type_name}**\n", stage=WorkflowStage.TASK_SCHEDULING)
+                        await self.emit_content(f"   查询策略: {task.query}\n\n", stage=WorkflowStage.TASK_SCHEDULING)
                     
                     self.parallel_tasks_config = ParallelTasksConfig(
                         tasks=valid_tasks,
@@ -307,37 +319,40 @@ class WorkflowTask(BaseConversationTask):
                         timeout=60
                     )
                     
-                    await self.emit_content(f"✅ **任务规划完成** - 已生成 {len(valid_tasks)} 个并行检索任务\n")
+                    # 删除冗余提示
                     
                     # 如果有知识库配置，显示选择的知识库
                     if self.knowledge_bases and any(task.type == "knowledge_search" for task in valid_tasks):
-                        await self.emit_content("\n📚 **知识库配置：**\n")
-                        await self.emit_content("系统将根据问题内容智能选择最相关的知识库进行检索\n")
+                        # 删除知识库配置提示
                         
                         # 如果使用了自定义的知识库API URL
                         if self.knowledge_api_url:
-                            await self.emit_content(f"🔗 使用自定义知识库API: {self.knowledge_api_url}\n")
+                            await self.emit_content(f"🔗 使用自定义知识库API: {self.knowledge_api_url}\n", stage=WorkflowStage.TASK_SCHEDULING)
                     
-                    await self.emit_status("task_scheduling", status="completed", progress=0.4)
+                    self.update_status("completed")
+                    self.update_progress(0.4)
                 else:
                     # 没有有效任务，使用默认配置
                     self.logger.warning("没有生成有效的任务配置")
                     self._use_default_task_config()
-                    await self.emit_content("⚠️ 任务配置验证失败，使用默认检索策略\n")
-                    await self.emit_status("task_scheduling", status="completed", progress=0.4)
+                    await self.emit_content("⚠️ 任务配置验证失败，使用默认检索策略\n", stage=WorkflowStage.TASK_SCHEDULING)
+                    self.update_status("completed")
+                    self.update_progress(0.4)
             else:
                 # JSON格式异常，使用默认配置
                 self.logger.warning("任务规划返回数据格式异常")
                 self._use_default_task_config()
-                await self.emit_content("⚠️ 任务规划数据格式异常，使用默认检索策略\n")
-                await self.emit_status("task_scheduling", status="completed", progress=0.4)
+                await self.emit_content("⚠️ 任务规划数据格式异常，使用默认检索策略\n", stage=WorkflowStage.TASK_SCHEDULING)
+                self.update_status("completed")
+                self.update_progress(0.4)
                 
         except Exception as e:
             # 如果任务规划失败，使用默认配置
             self.logger.warning(f"任务规划生成失败: {str(e)}")
             self._use_default_task_config()
-            await self.emit_content(f"⚠️ 任务规划过程遇到问题，使用默认检索策略\n")
-            await self.emit_status("task_scheduling", status="completed", progress=0.4)
+            await self.emit_content(f"⚠️ 任务规划过程遇到问题，使用默认检索策略\n", stage=WorkflowStage.TASK_SCHEDULING)
+            self.update_status("completed")
+            self.update_progress(0.4)
     
     def _use_default_task_config(self) -> None:
         """使用默认任务配置"""
@@ -355,9 +370,9 @@ class WorkflowTask(BaseConversationTask):
     
     async def _stage_3_execute_tasks(self) -> None:
         """阶段3：并行任务执行"""
-        self.update_stage("executing_tasks")
-        await self.emit_status("executing_tasks", progress=0.5)
-        await self.emit_content("正在执行并行检索任务...")
+        self.update_stage(WorkflowStage.EXECUTING_TASKS)
+        self.update_progress(0.5)
+        # 删除冗余提示
         
         if not self.parallel_tasks_config:
             raise ValueError("任务配置未生成")
@@ -380,7 +395,7 @@ class WorkflowTask(BaseConversationTask):
         results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
         
         # 处理结果并实时反馈
-        await self.emit_content("\n\n📊 **检索结果：**")
+        # 简化检索结果输出
         
         # 定义任务类型的中文名称
         type_names = {
@@ -401,8 +416,8 @@ class WorkflowTask(BaseConversationTask):
                 self.task_results[task_type] = {"error": error_msg}
                 
                 # 向前端发送错误反馈
-                await self.emit_content(f"\n❌ **{type_name}** - 检索失败")
-                await self.emit_content(f"   错误信息: {error_msg}")
+                # 只在错误时输出简单信息
+                await self.emit_content(f"\n❌ {type_name}检索失败: {error_msg}", stage=WorkflowStage.EXECUTING_TASKS)
             else:
                 # 处理成功情况
                 self.task_results[task_type] = result
@@ -430,30 +445,57 @@ class WorkflowTask(BaseConversationTask):
                 
                 # 向前端发送成功反馈
                 if result_count > 0:
-                    await self.emit_content(f"\n✅ **{type_name}** - 检索成功")
-                    await self.emit_content(f"   获得 {result_count} 个结果")
+                    # 简化成功信息
                     success_count += 1
                 else:
                     # 虽然技术上成功了，但没有找到结果
-                    await self.emit_content(f"\n⚠️ **{type_name}** - 未找到相关结果")
-                    await self.emit_content(f"   查询: {result.get('query', '未知')}")
+                    # 删除未找到结果的提示
                     self.logger.warning(f"{task_type} 返回了空结果")
         
-        # 总结反馈
-        await self.emit_content(f"\n\n📈 **检索总结：**")
-        await self.emit_content(f"- 成功: {success_count}/{len(tasks)} 个任务")
-        await self.emit_content(f"- 失败: {len(tasks) - success_count}/{len(tasks)} 个任务")
+        # 删除检索总结
         
-        # 生成结构化的搜索结果报告
-        await self._generate_search_results_report()
+        self.update_status("completed")
+        self.update_progress(0.8)
+    
+    async def _stage_3_5_generate_report(self) -> None:
+        """阶段3.5：生成检索结果报告"""
+        self.update_stage(WorkflowStage.REPORT_GENERATION)
+        self.update_progress(0.82)
+        await self.emit_content("\n\n## 📊 **检索结果报告**\n", stage=WorkflowStage.REPORT_GENERATION, progress=0.82)
         
-        await self.emit_status("executing_tasks", status="completed", progress=0.8)
+        try:
+            # 构建结构化的搜索结果报告
+            search_report = {
+                "timestamp": datetime.now().isoformat(),
+                "query": self.optimized_question,
+                "search_results": {
+                    "online_search": self._format_search_results("online_search"),
+                    "knowledge_search": self._format_search_results("knowledge_search"),
+                    "lightrag_search": self._format_search_results("lightrag_search")
+                }
+            }
+            
+            # 生成并发送Markdown格式的搜索报告
+            markdown_report = self._generate_markdown_report(search_report)
+            await self.emit_content(markdown_report, stage=WorkflowStage.REPORT_GENERATION)
+            
+            self.update_status("completed")
+            self.update_progress(0.85)
+            
+        except Exception as e:
+            error_msg = f"生成检索结果报告时发生错误: {str(e)}"
+            self.logger.error(error_msg)
+            await self.emit_content(f"⚠️ {error_msg}\n", stage=WorkflowStage.REPORT_GENERATION)
+            
+            # 即使报告生成失败，也继续执行后续阶段
+            self.update_status("completed")
+            self.update_progress(0.85)
     
     async def _stage_4_generate_answer(self, user_question: str) -> None:
         """阶段4：专业综合分析与详细回答"""
-        self.update_stage("generating_answer")
-        await self.emit_status("generating_answer", progress=0.85)
-        await self.emit_content("\n\n## 💡 **专业综合分析**\n")
+        self.update_stage(WorkflowStage.GENERATING_ANSWER)
+        self.update_progress(0.87)
+        await self.emit_content("\n\n## 💡 **专业综合分析**\n", stage=WorkflowStage.GENERATING_ANSWER, progress=0.87)
         
         try:
             # 构建检索结果上下文和历史上下文
@@ -481,8 +523,8 @@ class WorkflowTask(BaseConversationTask):
                 # 如果回答过短，提供基础回答
                 basic_answer = self._generate_basic_answer(user_question, results_context)
                 self.final_answer = basic_answer
-                await self.emit_content(f"\n⚠️ 专业分析生成异常，已提供基础回答\n")
-                await self.emit_content(basic_answer)
+                await self.emit_content(f"\n⚠️ 专业分析生成异常，已提供基础回答\n", stage=WorkflowStage.GENERATING_ANSWER)
+                await self.emit_content(basic_answer, stage=WorkflowStage.GENERATING_ANSWER)
             
             # 添加助手回答到历史记录
             assistant_message = Message(
@@ -496,7 +538,8 @@ class WorkflowTask(BaseConversationTask):
             )
             self.history.add_message(assistant_message)
             
-            await self.emit_status("generating_answer", status="completed", progress=1.0)
+            self.update_status("completed")
+            self.update_progress(1.0)
             
         except Exception as e:
             error_msg = f"生成专业分析时发生错误: {str(e)}"
@@ -508,9 +551,9 @@ class WorkflowTask(BaseConversationTask):
                 fallback_answer = self._generate_basic_answer(user_question, results_context)
                 self.final_answer = fallback_answer
                 
-                await self.emit_content(f"\n⚠️ {error_msg}\n")
-                await self.emit_content("已切换到基础分析模式：\n\n")
-                await self.emit_content(fallback_answer)
+                await self.emit_content(f"\n⚠️ {error_msg}\n", stage=WorkflowStage.GENERATING_ANSWER)
+                await self.emit_content("已切换到基础分析模式：\n\n", stage=WorkflowStage.GENERATING_ANSWER)
+                await self.emit_content(fallback_answer, stage=WorkflowStage.GENERATING_ANSWER)
                 
             except Exception as fallback_error:
                 # 最后的兜底方案
@@ -579,9 +622,9 @@ class WorkflowTask(BaseConversationTask):
     async def _execute_online_search(self, query: str) -> Dict[str, Any]:
         """执行在线搜索"""
         try:
-            self.logger.info(f"开始执行在线搜索: {query}")
+            # 删除冗余日志
             results = await self.search_service.search_online(query)
-            self.logger.info(f"在线搜索成功，获得 {len(results)} 个结果")
+            # 删除冗余日志
             return {"type": "online_search", "query": query, "results": results}
         except Exception as e:
             error_msg = f"在线搜索失败: {str(e)}"
@@ -591,7 +634,7 @@ class WorkflowTask(BaseConversationTask):
     async def _execute_knowledge_search(self, query: str) -> Dict[str, Any]:
         """执行知识库搜索（包含智能选择知识库的子阶段）"""
         try:
-            self.logger.info(f"开始执行知识库搜索: {query}")
+            # 删除冗余日志
             
             # 如果有用户token，使用新的query_doc方法
             if hasattr(self, 'user_token') and self.user_token:
@@ -607,10 +650,10 @@ class WorkflowTask(BaseConversationTask):
                 valid_names = [kb.get('name') for kb in self.knowledge_bases] if self.knowledge_bases else []
                 if collection_name not in valid_names and collection_name != "test":
                     self.logger.warning(f"检测到无效的知识库名称 '{collection_name}'，强制使用 'test'")
-                    await self.emit_content(f"\n⚠️ 最终验证发现知识库名称 '{collection_name}' 无效，已强制使用默认库 'test'")
+                    # 删除调试信息
                     collection_name = "test"
                 
-                self.logger.info(f"使用query_doc方法，collection: {collection_name}")
+                # 删除冗余日志
                 
                 # 尝试使用选定的知识库，如果失败则回退到默认值
                 try:
@@ -621,7 +664,48 @@ class WorkflowTask(BaseConversationTask):
                         k=5,
                         api_url=self.knowledge_api_url
                     )
-                    self.logger.info(f"知识库搜索成功 (query_doc_by_name)")
+                    # 删除冗余日志
+                    
+                    # 如果结果中有full_documents，直接返回
+                    if "full_documents" in results:
+                        return {"type": "knowledge_search", "query": query, "results": results, "collection_name": collection_name}
+                    
+                    # 否则，获取文档完整内容
+                    if "metadatas" in results and results["metadatas"]:
+                        metadatas = results["metadatas"]
+                        if metadatas and isinstance(metadatas[0], list):
+                            full_documents = []
+                            
+                            for metadata in metadatas[0]:
+                                if isinstance(metadata, dict) and "file_id" in metadata:
+                                    file_id = metadata["file_id"]
+                                    
+                                    # 获取文档完整内容
+                                    full_content = await self.knowledge_service.get_document_content(
+                                        token=self.user_token,
+                                        file_id=file_id,
+                                        api_url=self.knowledge_api_url
+                                    )
+                                    
+                                    if full_content:
+                                        full_documents.append(full_content)
+                                    else:
+                                        # 如果获取失败，使用原始片段
+                                        if "documents" in results and results["documents"] and len(full_documents) < len(results["documents"][0]):
+                                            full_documents.append(results["documents"][0][len(full_documents)])
+                                        else:
+                                            full_documents.append("")
+                                else:
+                                    # 没有file_id，使用原始内容
+                                    if "documents" in results and results["documents"] and len(full_documents) < len(results["documents"][0]):
+                                        full_documents.append(results["documents"][0][len(full_documents)])
+                                    else:
+                                        full_documents.append("")
+                            
+                            # 将完整内容添加到结果中
+                            results["full_documents"] = [full_documents]
+                            # 删除冗余日志
+                    
                     return {"type": "knowledge_search", "query": query, "results": results, "collection_name": collection_name}
                 except Exception as e:
                     # 如果是collection不存在的错误或未找到知识库，尝试使用默认知识库
@@ -629,7 +713,7 @@ class WorkflowTask(BaseConversationTask):
                     if ("Collection" in error_str and "does not exist" in error_str) or \
                        ("未找到名称为" in error_str and "的知识库" in error_str):
                         self.logger.warning(f"知识库 {collection_name} 不存在或未找到，尝试使用默认知识库: test")
-                        await self.emit_content(f"\n⚠️ 知识库 {collection_name} 不存在，使用默认知识库")
+                        # 删除调试信息
                         
                         try:
                             results = await self.knowledge_service.query_doc_by_name(
@@ -639,7 +723,40 @@ class WorkflowTask(BaseConversationTask):
                                 k=5,
                                 api_url=self.knowledge_api_url
                             )
-                            self.logger.info(f"使用默认知识库搜索成功")
+                            # 删除冗余日志
+                            
+                            # 同样处理默认知识库的结果
+                            if "full_documents" not in results and "metadatas" in results and results["metadatas"]:
+                                metadatas = results["metadatas"]
+                                if metadatas and isinstance(metadatas[0], list):
+                                    full_documents = []
+                                    
+                                    for i, metadata in enumerate(metadatas[0]):
+                                        if isinstance(metadata, dict) and "file_id" in metadata:
+                                            file_id = metadata["file_id"]
+                                            
+                                            full_content = await self.knowledge_service.get_document_content(
+                                                token=self.user_token,
+                                                file_id=file_id,
+                                                api_url=self.knowledge_api_url
+                                            )
+                                            
+                                            if full_content:
+                                                full_documents.append(full_content)
+                                            else:
+                                                if "documents" in results and results["documents"] and i < len(results["documents"][0]):
+                                                    full_documents.append(results["documents"][0][i])
+                                                else:
+                                                    full_documents.append("")
+                                        else:
+                                            if "documents" in results and results["documents"] and i < len(results["documents"][0]):
+                                                full_documents.append(results["documents"][0][i])
+                                            else:
+                                                full_documents.append("")
+                                    
+                                    results["full_documents"] = [full_documents]
+                                    # 删除冗余日志
+                            
                             return {"type": "knowledge_search", "query": query, "results": results, "collection_name": "test"}
                         except Exception as fallback_error:
                             # 如果默认知识库也失败，抛出原始错误
@@ -649,13 +766,13 @@ class WorkflowTask(BaseConversationTask):
                         raise
             else:
                 # 使用原有的方法，传递knowledge_api_url
-                self.logger.info(f"使用search_cosmetics_knowledge方法")
+                # 删除冗余日志
                 results = await self.knowledge_service.search_cosmetics_knowledge(
                     query=query,
                     api_url=self.knowledge_api_url
                 )
                 result_count = len(results) if isinstance(results, list) else 0
-                self.logger.info(f"知识库搜索成功，获得 {result_count} 个结果")
+                # 删除冗余日志
                 return {"type": "knowledge_search", "query": query, "results": results}
         except Exception as e:
             error_msg = f"知识库搜索失败: {str(e)}"
@@ -666,29 +783,24 @@ class WorkflowTask(BaseConversationTask):
         """智能选择最合适的知识库"""
         try:
             # 打印当前的知识库配置，便于调试
-            self.logger.info(f"开始知识库选择流程，查询: {query}")
-            self.logger.info(f"当前知识库配置: {self.knowledge_bases}")
+            # 删除冗余日志
             
-            # 向用户显示调试信息
-            await self.emit_content(f"\n🔍 **知识库选择调试信息**")
-            await self.emit_content(f"   查询内容: {query}")
-            await self.emit_content(f"   可用知识库数量: {len(self.knowledge_bases) if self.knowledge_bases else 0}")
+            # 删除知识库选择的调试信息
             
             # 如果没有配置知识库，直接返回默认值
             if not self.knowledge_bases or len(self.knowledge_bases) == 0:
-                self.logger.info("没有配置知识库，使用默认值: test")
-                await self.emit_content(f"   未配置知识库，使用默认: test")
+                # 删除冗余日志
+                # 删除调试信息
                 return "test"
             
-            # 显示可用的知识库列表
+            # 删除可用知识库列表显示
             kb_names = [kb.get('name', '未知') for kb in self.knowledge_bases]
-            await self.emit_content(f"   可用知识库: {', '.join(kb_names)}")
             
             # 如果只有一个知识库，直接使用
             if len(self.knowledge_bases) == 1:
                 selected_name = self.knowledge_bases[0].get('name', 'test')
-                self.logger.info(f"只有一个知识库，直接选择: {selected_name}")
-                await self.emit_content(f"   仅有一个知识库，直接选择: {selected_name}")
+                # 删除冗余日志
+                # 删除调试信息
                 return selected_name
             
             # 使用新的知识库选择提示词
@@ -706,38 +818,36 @@ class WorkflowTask(BaseConversationTask):
                 
                 # 验证选择的知识库是否存在
                 valid_names = [kb.get('name') for kb in self.knowledge_bases]
-                self.logger.info(f"LLM返回的知识库名称: '{selected_name}', 可用选项: {valid_names}")
+                # 删除冗余日志
                 
                 # 严格验证选择的名称
                 if selected_name and selected_name in valid_names:
-                    self.logger.info(f"智能选择知识库: {selected_name}, 原因: {reason}")
+                    # 删除冗余日志
                     # 向前端发送选择结果
-                    await self.emit_content(f"\n🎯 **知识库选择**: {selected_name}")
-                    if reason:
-                        await self.emit_content(f"   选择原因: {reason}")
+                    # 删除知识库选择信息
                     return selected_name
                 else:
                     # 检查是否选择了常见的无效名称
                     invalid_names = ["default", "default_kb", "默认", "default_collection"]
                     if selected_name in invalid_names:
                         self.logger.warning(f"LLM使用了禁止的知识库名称: '{selected_name}'，这是常见的错误")
-                        await self.emit_content(f"\n⚠️ 系统检测到无效的知识库名称 '{selected_name}'")
+                        # 保留错误警告但不输出
                     else:
                         self.logger.warning(f"LLM选择了无效的知识库: '{selected_name}'，可用选项: {valid_names}")
-                        await self.emit_content(f"\n⚠️ LLM选择了无效的知识库名称 '{selected_name}'")
+                        # 保留错误警告但不输出
                     
                     # 使用第一个可用的知识库作为回退
                     fallback_kb = valid_names[0] if valid_names else "test"
-                    self.logger.info(f"自动回退到第一个可用知识库: {fallback_kb}")
-                    await self.emit_content(f"   已自动选择: {fallback_kb}")
+                    # 删除冗余日志
+                    # 删除调试信息
                     return fallback_kb
             else:
                 self.logger.warning("LLM未能返回有效的知识库选择结果")
                 # 返回第一个可用的知识库
                 valid_names = [kb.get('name') for kb in self.knowledge_bases]
                 fallback_kb = valid_names[0] if valid_names else "test"
-                self.logger.info(f"使用第一个可用知识库作为回退: {fallback_kb}")
-                await self.emit_content(f"\n⚠️ 知识库选择失败，使用默认选择: {fallback_kb}")
+                # 删除冗余日志
+                # 删除调试信息
                 return fallback_kb
                 
         except Exception as e:
@@ -747,9 +857,9 @@ class WorkflowTask(BaseConversationTask):
     async def _execute_lightrag_search(self, query: str) -> Dict[str, Any]:
         """执行LightRAG搜索"""
         try:
-            self.logger.info(f"开始执行LightRAG搜索: {query}")
+            # 删除冗余日志
             results = await self.lightrag_service.search_lightrag(query, mode="mix")
-            self.logger.info(f"LightRAG搜索成功，获得 {len(results)} 个结果")
+            # 删除冗余日志
             return {"type": "lightrag_search", "query": query, "results": results}
         except Exception as e:
             # 更安全的异常消息提取，避免访问不存在的键
@@ -761,25 +871,7 @@ class WorkflowTask(BaseConversationTask):
             
             self.logger.error(error_msg)
             return {"type": "lightrag_search", "query": query, "error": error_msg}
-    
-    async def _generate_search_results_report(self) -> None:
-        """生成结构化的搜索结果报告"""
-        import json
-        
-        # 构建结构化的搜索结果
-        search_report = {
-            "timestamp": datetime.now().isoformat(),
-            "query": self.optimized_question,
-            "search_results": {
-                "online_search": self._format_search_results("online_search"),
-                "knowledge_search": self._format_search_results("knowledge_search"),
-                "lightrag_search": self._format_search_results("lightrag_search")
-            }
-        }
-        
-        # 发送JSON结构
-        await self.emit_content("\n\n## 📊 检索结果\n")
-        await self.emit_content("```json\n" + json.dumps(search_report, ensure_ascii=False, indent=2) + "\n```")
+
     
     def _format_search_results(self, search_type: str) -> Dict[str, Any]:
         """格式化单个搜索类型的结果"""
@@ -805,23 +897,59 @@ class WorkflowTask(BaseConversationTask):
                 else:
                     item_dict = item if isinstance(item, dict) else {}
                 
+                # 检查content字段是否包含元数据（如用户示例中的格式）
+                content = item_dict.get("content", "")
+                if isinstance(content, dict) and "file_id" in content:
+                    # content包含元数据，需要提取文档内容
+                    # 暂时使用文件名和简要信息作为内容
+                    file_name = content.get("name", "未知文件")
+                    file_type = content.get("file_type", "text")
+                    content_text = f"文件: {file_name} (类型: {file_type})"
+                    # 将元数据保存以便后续处理
+                    item_dict["metadata"] = content
+                else:
+                    # 普通内容字符串
+                    content_text = str(content)
+                
+                # 限制内容长度（除非是知识库检索）
+                if search_type != "knowledge_search" and len(content_text) > 200:
+                    content_text = content_text[:200] + "..."
+                
                 formatted_result = {
                     "title": item_dict.get("title", "无标题"),
-                    "content": item_dict.get("content", "")[:200] + "..." if len(item_dict.get("content", "")) > 200 else item_dict.get("content", ""),
+                    "content": content_text,
                     "url": item_dict.get("url", ""),
-                    "score": item_dict.get("score", 0.0)
+                    "score": item_dict.get("score", 0.0),
+                    "metadata": item_dict.get("metadata", {})
                 }
                 search_results.append(formatted_result)
         elif isinstance(raw_results, dict) and "documents" in raw_results:
             # 处理query_doc格式
-            docs = raw_results.get("documents", [])
+            # 优先使用完整文档内容
+            docs = raw_results.get("full_documents", [])
+            if not docs:
+                # 如果没有完整内容，使用原始文档片段
+                docs = raw_results.get("documents", [])
+                
+            metadatas = raw_results.get("metadatas", [])
+            
             if docs and isinstance(docs[0], list):
                 for i, doc in enumerate(docs[0][:5]):
+                    # 获取元数据
+                    metadata = {}
+                    if metadatas and isinstance(metadatas[0], list) and i < len(metadatas[0]):
+                        metadata = metadatas[0][i] if isinstance(metadatas[0][i], dict) else {}
+                    
+                    # 从元数据中提取文档信息
+                    title = metadata.get("name", f"文档片段 {i+1}")
+                    file_type = metadata.get("file_type", "text")
+                    
                     formatted_result = {
-                        "title": f"文档片段 {i+1}",
-                        "content": doc[:200] + "..." if len(doc) > 200 else doc,
+                        "title": title,
+                        "content": doc,  # 使用完整内容
                         "url": "",
-                        "score": 1.0
+                        "score": 1.0,
+                        "metadata": metadata  # 保存完整的元数据
                     }
                     search_results.append(formatted_result)
         
@@ -833,7 +961,7 @@ class WorkflowTask(BaseConversationTask):
             "results": search_results
         }
     
-    def _generate_markdown_report_deprecated(self, report: Dict[str, Any]) -> str:
+    def _generate_markdown_report(self, report: Dict[str, Any]) -> str:
         """生成Markdown格式的搜索报告"""
         md_lines = []
         
@@ -868,7 +996,9 @@ class WorkflowTask(BaseConversationTask):
                     for i, res in enumerate(result_data["results"], 1):
                         md_lines.append(f"\n{i}. **{res['title']}**")
                         if res['content']:
-                            md_lines.append(f"   > {res['content']}")
+                            # 限制内容长度，避免输出过长
+                            content = res['content'][:200] + "..." if len(res['content']) > 200 else res['content']
+                            md_lines.append(f"   > {content}")
                         if res.get('url'):
                             md_lines.append(f"   > 链接: {res['url']}")
                         if res.get('score') > 0:
@@ -985,11 +1115,17 @@ class WorkflowTask(BaseConversationTask):
                         context_parts.append(f"[{ref_counter}] {type_name}结果:")
                         context_parts.append(f"  标题：{item_dict.get('title', '无标题')}")
                         
-                        # 限制内容长度
+                        # 对于知识库检索，使用完整内容
                         content = item_dict.get('content', '无内容')
-                        if len(content) > 300:
-                            content = content[:300] + "..."
-                        context_parts.append(f"  内容：{content}")
+                        
+                        if task_type == "knowledge_search":
+                            # 知识库检索使用完整内容
+                            context_parts.append(f"  内容：{content}")
+                        else:
+                            # 其他类型仍然限制长度
+                            if len(content) > 300:
+                                content = content[:300] + "..."
+                            context_parts.append(f"  内容：{content}")
                         
                         # 特别标注URL信息（在线搜索必须有URL）
                         url = item_dict.get('url', '')
@@ -1011,6 +1147,43 @@ class WorkflowTask(BaseConversationTask):
                         
                         context_parts.append("")  # 空行分隔
                         ref_counter += 1
+                        
+                elif "documents" in result or "full_documents" in result:
+                    # 处理query_doc格式的结果
+                    docs = result.get("full_documents", [])
+                    if not docs:
+                        docs = result.get("documents", [])
+                    
+                    metadatas = result.get("metadatas", [])
+                    
+                    if docs and isinstance(docs[0], list):
+                        context_parts.append(f"结果数量：{len(docs[0])}个\n")
+                        
+                        for i, doc in enumerate(docs[0]):
+                            # 获取元数据
+                            metadata = {}
+                            if metadatas and isinstance(metadatas[0], list) and i < len(metadatas[0]):
+                                metadata = metadatas[0][i] if isinstance(metadatas[0][i], dict) else {}
+                            
+                            # 从元数据中提取文档信息
+                            title = metadata.get("name", f"文档片段 {i+1}")
+                            
+                            context_parts.append(f"[{ref_counter}] {type_name}结果:")
+                            context_parts.append(f"  标题：{title}")
+                            
+                            # 知识库检索使用完整内容
+                            context_parts.append(f"  内容：{doc}")
+                            
+                            # 添加元数据信息
+                            if metadata.get("file_type"):
+                                context_parts.append(f"  文件类型：{metadata['file_type']}")
+                            if metadata.get("source"):
+                                context_parts.append(f"  来源：{metadata['source']}")
+                            
+                            context_parts.append("")  # 空行分隔
+                            ref_counter += 1
+                    else:
+                        context_parts.append("结果数量：0个\n")
         
         return "\n".join(context_parts) if context_parts else "无检索结果"
     

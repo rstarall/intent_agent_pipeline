@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 from pydantic import ValidationError
 
-from ..models import ExecutionModeType, MessageRoleType
+from ..models import ExecutionMode, MessageRole
 
 
 class ValidationError(Exception):

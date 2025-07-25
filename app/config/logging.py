@@ -182,10 +182,6 @@ class StructuredLogger:
     
     def debug(self, message: str, **kwargs):
         """调试日志"""
-        # 同时输出到print和logger
-        print(f"[DEBUG] {message} {kwargs}")
-        sys.stdout.flush()
-        
         if self.use_structlog:
             self.logger.debug(message, **kwargs)
         else:
@@ -195,10 +191,6 @@ class StructuredLogger:
 
     def info(self, message: str, **kwargs):
         """信息日志"""
-        # 同时输出到print和logger
-        print(f"[INFO] {message} {kwargs}")
-        sys.stdout.flush()
-        
         if self.use_structlog:
             self.logger.info(message, **kwargs)
         else:
@@ -208,10 +200,6 @@ class StructuredLogger:
 
     def warning(self, message: str, **kwargs):
         """警告日志"""
-        # 同时输出到print和logger
-        print(f"[WARNING] {message} {kwargs}")
-        sys.stdout.flush()
-        
         if self.use_structlog:
             self.logger.warning(message, **kwargs)
         else:
@@ -221,10 +209,6 @@ class StructuredLogger:
 
     def error(self, message: str, **kwargs):
         """错误日志"""
-        # 同时输出到print和logger
-        print(f"[ERROR] {message} {kwargs}")
-        sys.stdout.flush()
-        
         if self.use_structlog:
             self.logger.error(message, **kwargs)
         else:
@@ -234,10 +218,6 @@ class StructuredLogger:
 
     def critical(self, message: str, **kwargs):
         """严重错误日志"""
-        # 同时输出到print和logger
-        print(f"[CRITICAL] {message} {kwargs}")
-        sys.stdout.flush()
-        
         if self.use_structlog:
             self.logger.critical(message, **kwargs)
         else:

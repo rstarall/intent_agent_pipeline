@@ -9,7 +9,7 @@ import aiohttp
 import json
 
 from ..config import get_settings, get_logger
-from ..models import SearchResult, LightRagModeType
+from ..models import SearchResult, LightRagMode
 
 
 class LightRagService:
@@ -36,7 +36,7 @@ class LightRagService:
     async def search_lightrag(
         self,
         query: str,
-        mode: LightRagModeType = "mix",
+        mode: str = "mix",
         only_need_context: bool = False
     ) -> List[SearchResult]:
         """

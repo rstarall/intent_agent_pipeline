@@ -9,10 +9,7 @@ from typing import Dict, List, Optional, Any, Union
 from pydantic import BaseModel, Field
 
 from .enums import (
-    TaskStatus, TaskStatusType, 
-    ResponseType, ResponseTypeType,
-    AgentType, AgentTypeType,
-    WorkflowStage, WorkflowStageType
+    TaskStatus, ResponseType, AgentType, WorkflowStage
 )
 
 
@@ -20,13 +17,13 @@ class StreamResponse(BaseModel):
     """流式响应数据模型"""
     
     conversation_id: str = Field(..., description="对话ID")
-    response_type: ResponseTypeType = Field(..., description="响应类型")
+    response_type: str = Field(..., description="响应类型")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
     
     # 状态信息字段
-    stage: Optional[WorkflowStageType] = Field(None, description="当前阶段")
-    agent_name: Optional[AgentTypeType] = Field(None, description="Agent名称")
-    status: Optional[TaskStatusType] = Field(None, description="任务状态")
+    stage: Optional[str] = Field(None, description="当前阶段")
+    agent_name: Optional[str] = Field(None, description="Agent名称")
+    status: Optional[str] = Field(None, description="任务状态")
     progress: Optional[float] = Field(None, description="执行进度 (0.0-1.0)")
     
     # 内容字段
@@ -55,6 +52,12 @@ class StreamResponse(BaseModel):
         # 根据响应类型添加对应字段
         if self.response_type == "content":
             data["content"] = self.content or ""
+            if self.stage:
+                data["stage"] = self.stage
+            if self.status:
+                data["status"] = self.status
+            if self.progress is not None:
+                data["progress"] = self.progress
         elif self.response_type == "status":
             data["description"] = self._get_status_description()
             if self.stage:
@@ -102,9 +105,9 @@ class StreamResponse(BaseModel):
     def create_status_response(
         cls,
         conversation_id: str,
-        stage: WorkflowStageType,
-        agent_name: Optional[AgentTypeType] = None,
-        status: TaskStatusType = "running",
+        stage: str,
+        agent_name: Optional[str] = None,
+        status: str = "running",
         progress: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> "StreamResponse":
@@ -124,6 +127,9 @@ class StreamResponse(BaseModel):
         cls,
         conversation_id: str,
         content: str,
+        stage: Optional[str] = None,
+        status: Optional[str] = None,
+        progress: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> "StreamResponse":
         """创建内容响应"""
@@ -131,6 +137,9 @@ class StreamResponse(BaseModel):
             conversation_id=conversation_id,
             response_type="content",
             content=content,
+            stage=stage,
+            status=status,
+            progress=progress,
             metadata=metadata or {}
         )
     

@@ -46,16 +46,18 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
         
-        # 记录请求开始
-        self.logger.info(
-            "HTTP请求开始",
-            request_id=request_id,
-            method=method,
-            path=path,
-            query_params=query_params,
-            client_ip=client_ip,
-            user_agent=user_agent
-        )
+        # 仅在非健康检查路径上记录请求开始
+        is_health_check = path.startswith("/api/v1/health")
+        if not is_health_check:
+            self.logger.info(
+                "HTTP请求开始",
+                request_id=request_id,
+                method=method,
+                path=path,
+                query_params=query_params,
+                client_ip=client_ip,
+                user_agent=user_agent
+            )
         
         try:
             # 处理请求
@@ -64,15 +66,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             # 计算处理时间
             process_time = time.time() - start_time
             
-            # 记录请求完成
-            self.logger.log_request(
-                method=method,
-                path=path,
-                status_code=response.status_code,
-                duration=process_time,
-                request_id=request_id,
-                client_ip=client_ip
-            )
+            # 仅在非健康检查路径上记录请求完成
+            if not is_health_check:
+                self.logger.log_request(
+                    method=method,
+                    path=path,
+                    status_code=response.status_code,
+                    duration=process_time,
+                    request_id=request_id,
+                    client_ip=client_ip
+                )
             
             # 添加响应头
             response.headers["X-Request-ID"] = request_id

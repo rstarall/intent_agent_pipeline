@@ -9,6 +9,7 @@ from datetime import datetime
 
 from .base_task import BaseConversationTask
 from ..models import Message, GlobalContext
+from ..models.enums import WorkflowStage
 from ..langgraph import LangGraphManager
 from ..services import LLMService
 from ..config import get_logger
@@ -72,7 +73,7 @@ class AgentTask(BaseConversationTask):
             conversation_history=self.history.get_recent_messages(limit=5)
         ):
             # 实时发送内容片段给用户
-            await self.emit_content(chunk)
+            await self.emit_content(chunk, stage=self.current_stage)
             
             # 收集完整响应
             full_response += chunk
@@ -133,9 +134,9 @@ class AgentTask(BaseConversationTask):
     
     async def _agent_stage_understand_question(self) -> None:
         """Agent阶段1：问题理解与分析"""
-        self.update_stage("analyzing_question")
+        self.update_stage(WorkflowStage.ANALYZING_QUESTION)
         self.current_agent = "QuestionAnalyzer"
-        await self.emit_status("analyzing_question", progress=0.1)
+        self.update_progress(0.1)
         
         user_question = self.global_context.user_question
         
@@ -167,7 +168,7 @@ class AgentTask(BaseConversationTask):
         请提供详细的分析思路：
         """
         
-        await self.emit_content("🤖 **QuestionAnalyzer**: 正在分析问题...")
+        await self.emit_content("🤖 **QuestionAnalyzer**: 正在分析问题...", stage=WorkflowStage.ANALYZING_QUESTION, progress=0.1)
         
         # 使用流式响应进行问题分析
         analysis_result = await self._generate_with_stream(
@@ -179,13 +180,14 @@ class AgentTask(BaseConversationTask):
         # 保存分析结果到全局上下文
         self.global_context.question_analysis = analysis_result
         
-        await self.emit_status("analyzing_question", status="completed", progress=0.25)
+        self.update_status("completed")
+        self.update_progress(0.25)
     
     async def _agent_stage_plan_tasks(self) -> None:
         """Agent阶段2：任务规划"""
-        self.update_stage("task_scheduling")
+        self.update_stage(WorkflowStage.TASK_SCHEDULING)
         self.current_agent = "TaskPlanner"
-        await self.emit_status("task_scheduling", progress=0.3)
+        self.update_progress(0.3)
         
         # 构建任务规划提示
         plan_prompt = f"""
@@ -203,11 +205,11 @@ class AgentTask(BaseConversationTask):
         请详细说明执行策略：
         """
         
-        await self.emit_content("\n🗂️ **TaskPlanner**: 正在制定执行计划...")
+        await self.emit_content("\n🗂️ **TaskPlanner**: 正在制定执行计划...", stage=WorkflowStage.TASK_SCHEDULING, progress=0.3)
         
         # 如果有知识库配置，输出知识库选择信息
         if self.knowledge_bases:
-            await self.emit_content("\n📚 系统将基于问题内容智能选择最相关的知识库")
+            await self.emit_content("\n📚 系统将基于问题内容智能选择最相关的知识库", stage=WorkflowStage.TASK_SCHEDULING)
         
         # 使用流式响应进行任务规划
         planning_result = await self._generate_with_stream(
@@ -219,23 +221,23 @@ class AgentTask(BaseConversationTask):
         # 保存规划结果
         self.global_context.task_plan = planning_result
         
-        await self.emit_status("task_scheduling", status="completed", progress=0.5)
+        self.update_status("completed")
+        self.update_progress(0.5)
     
     async def _agent_stage_execute_tasks(self) -> None:
         """Agent阶段3：执行任务"""
-        self.update_stage("executing_tasks")
+        self.update_stage(WorkflowStage.EXECUTING_TASKS)
         self.current_agent = "TaskExecutor"
-        await self.emit_status("executing_tasks", progress=0.6)
+        self.update_progress(0.6)
         
         # 构建任务执行提示
         execute_prompt = f"""
-        现在开始执行任务。
+        基于制定的计划，开始执行具体任务。
         
-        原始问题：{self.global_context.user_question}
-        问题分析：{self.global_context.question_analysis}
-        执行计划：{self.global_context.task_plan}
+        任务计划：
+        {self.global_context.task_plan}
         
-        请按照计划执行任务，并提供：
+        现在开始执行任务，记录：
         1. 每个任务的执行过程
         2. 发现的关键信息
         3. 遇到的问题和解决方案
@@ -244,7 +246,7 @@ class AgentTask(BaseConversationTask):
         请详细展示执行过程：
         """
         
-        await self.emit_content("\n⚙️ **TaskExecutor**: 正在执行任务...")
+        await self.emit_content("\n⚙️ **TaskExecutor**: 正在执行任务...", stage=WorkflowStage.EXECUTING_TASKS, progress=0.6)
         
         # 使用流式响应执行任务
         execution_result = await self._generate_with_stream(
@@ -256,13 +258,14 @@ class AgentTask(BaseConversationTask):
         # 保存执行结果
         self.global_context.execution_results = execution_result
         
-        await self.emit_status("executing_tasks", status="completed", progress=0.8)
+        self.update_status("completed")
+        self.update_progress(0.8)
     
     async def _agent_stage_integrate_results(self) -> None:
         """Agent阶段4：结果整合"""
-        self.update_stage("response_generation")
+        self.update_stage(WorkflowStage.RESPONSE_GENERATION)
         self.current_agent = "ResultIntegrator"
-        await self.emit_status("response_generation", progress=0.9)
+        self.update_progress(0.9)
         
         # 构建检索结果的详细上下文
         results_context = self._build_results_context()
@@ -332,7 +335,7 @@ class AgentTask(BaseConversationTask):
         最终答案：
         """
         
-        await self.emit_content("\n🔄 **ResultIntegrator**: 正在整合结果...")
+        await self.emit_content("\n🔄 **ResultIntegrator**: 正在整合结果...", stage=WorkflowStage.RESPONSE_GENERATION, progress=0.9)
         
         # 使用流式响应生成最终答案
         final_answer = await self._generate_with_stream(
@@ -357,8 +360,10 @@ class AgentTask(BaseConversationTask):
         )
         self.history.add_message(assistant_message)
         
-        await self.emit_content("\n✅ **任务完成**")
-        await self.emit_status("response_generation", status="completed", progress=1.0)
+        await self.emit_content("\n✅ **任务完成**", stage=WorkflowStage.RESPONSE_GENERATION)
+        
+        self.update_status("completed")
+        self.update_progress(1.0)
         
         self.workflow_completed = True
         self.final_answer_sent = True
@@ -372,7 +377,7 @@ class AgentTask(BaseConversationTask):
             
             if node_name:
                 self.current_agent = node_name
-                self.update_stage("agent_workflow")
+                self.update_stage(WorkflowStage.AGENT_WORKFLOW)
                 
                 # 记录执行步骤
                 step = {
@@ -382,12 +387,8 @@ class AgentTask(BaseConversationTask):
                 }
                 self.execution_steps.append(step)
                 
-                # 发送状态更新
-                await self.emit_status(
-                    "agent_workflow",
-                    agent_name=node_name,
-                    metadata={"step_count": len(self.execution_steps)}
-                )
+                # 记录状态更新
+                self.logger.debug(f"Agent工作流步骤: {node_name}, 总步骤数: {len(self.execution_steps)}")
                 
                 # 处理不同Agent的输出
                 await self._handle_agent_output(node_name, node_output)
@@ -418,28 +419,28 @@ class AgentTask(BaseConversationTask):
         reasoning = output.get("reasoning", "")
         
         if reasoning:
-            await self.emit_content(f"🤖 总控制者分析: {reasoning}")
+            await self.emit_content(f"�� 总控制者分析: {reasoning}", stage=self.current_stage)
         
         if decision == "continue":
-            await self.emit_content("需要收集更多信息，启动检索流程...")
+            await self.emit_content("需要收集更多信息，启动检索流程...", stage=self.current_stage)
         elif decision == "finish":
-            await self.emit_content("信息充足，准备生成最终回答...")
+            await self.emit_content("信息充足，准备生成最终回答...", stage=self.current_stage)
     
     async def _handle_query_optimizer_output(self, output: Dict[str, Any]) -> None:
         """处理问题优化Agent输出"""
         optimized_queries = output.get("optimized_queries", {})
         
         if optimized_queries:
-            await self.emit_content("🔍 问题优化完成，生成专门化查询:")
+            await self.emit_content("🔍 问题优化完成，生成专门化查询:", stage=self.current_stage)
             for agent_type, query in optimized_queries.items():
-                await self.emit_content(f"  • {agent_type}: {query}")
+                await self.emit_content(f"  • {agent_type}: {query}", stage=self.current_stage)
     
     async def _handle_parallel_search_output(self, output: Dict[str, Any]) -> None:
         """处理并行搜索输出"""
         search_results = output.get("search_results", {})
         
         if search_results:
-            await self.emit_content("\n📊 **并行检索结果：**")
+            await self.emit_content("\n📊 **并行检索结果：**", stage=self.current_stage)
             
             # 定义任务类型的中文名称
             type_names = {
@@ -456,8 +457,8 @@ class AgentTask(BaseConversationTask):
                 
                 # 检查是否有错误
                 if isinstance(results, dict) and "error" in results:
-                    await self.emit_content(f"\n❌ **{type_name}** - 检索失败")
-                    await self.emit_content(f"   错误信息: {results.get('error', '未知错误')}")
+                    await self.emit_content(f"\n❌ **{type_name}** - 检索失败", stage=self.current_stage)
+                    await self.emit_content(f"   错误信息: {results.get('error', '未知错误')}", stage=self.current_stage)
                     self.logger.error(f"Agent模式 - {search_type} 检索失败: {results.get('error')}")
                 else:
                     # 计算结果数量
@@ -469,29 +470,29 @@ class AgentTask(BaseConversationTask):
                         result_count = 0
                     
                     if result_count > 0:
-                        await self.emit_content(f"\n✅ **{type_name}** - 检索成功")
-                        await self.emit_content(f"   获得 {result_count} 个结果")
+                        await self.emit_content(f"\n✅ **{type_name}** - 检索成功", stage=self.current_stage)
+                        await self.emit_content(f"   获得 {result_count} 个结果", stage=self.current_stage)
                         success_count += 1
                         self.logger.info(f"Agent模式 - {search_type} 检索成功，获得 {result_count} 个结果")
                     else:
                         # 虽然技术上成功了，但没有找到结果
-                        await self.emit_content(f"\n⚠️ **{type_name}** - 未找到相关结果")
+                        await self.emit_content(f"\n⚠️ **{type_name}** - 未找到相关结果", stage=self.current_stage)
                         self.logger.warning(f"Agent模式 - {search_type} 返回了空结果")
             
             # 总结反馈
-            await self.emit_content(f"\n📈 **检索总结：**")
-            await self.emit_content(f"- 成功: {success_count}/{total_count} 个任务")
-            await self.emit_content(f"- 失败: {total_count - success_count}/{total_count} 个任务")
+            await self.emit_content(f"\n📈 **检索总结：**", stage=self.current_stage)
+            await self.emit_content(f"- 成功: {success_count}/{total_count} 个任务", stage=self.current_stage)
+            await self.emit_content(f"- 失败: {total_count - success_count}/{total_count} 个任务", stage=self.current_stage)
     
     async def _handle_summary_agent_output(self, output: Dict[str, Any]) -> None:
         """处理摘要Agent输出"""
         summaries = output.get("summaries", {})
         
         if summaries:
-            await self.emit_content("📝 信息摘要生成完成:")
+            await self.emit_content("📝 信息摘要生成完成:", stage=self.current_stage)
             for source, summary in summaries.items():
                 if summary:
-                    await self.emit_content(f"  • {source}: {summary[:100]}...")
+                    await self.emit_content(f"  • {source}: {summary[:100]}...", stage=self.current_stage)
     
     async def _handle_final_output_output(self, output: Dict[str, Any]) -> None:
         """处理最终输出Agent输出"""
@@ -511,22 +512,15 @@ class AgentTask(BaseConversationTask):
             self.add_message(assistant_message)
             
             # 发送最终答案
-            await self.emit_content(final_answer)
+            await self.emit_content(final_answer, stage=self.current_stage)
             self.final_answer_sent = True
             
             # 标记workflow完成
             self.workflow_completed = True
             
             # 发送完成状态
-            await self.emit_status(
-                "completed",
-                status="completed", 
-                progress=1.0,
-                metadata={
-                    "final_answer_length": len(final_answer),
-                    "total_steps": len(self.execution_steps)
-                }
-            )
+            self.update_status("completed")
+            self.update_progress(1.0)
     
     async def _process_final_result(self, final_state: Dict[str, Any]) -> None:
         """处理最终结果"""
@@ -548,23 +542,15 @@ class AgentTask(BaseConversationTask):
                 self.add_message(assistant_message)
                 
                 # 发送最终答案
-                await self.emit_content(final_answer)
+                await self.emit_content(final_answer, stage=self.current_stage)
                 self.final_answer_sent = True
             
             # 标记workflow完成
             self.workflow_completed = True
             
             # 发送最终完成状态
-            await self.emit_status(
-                "agent_workflow", 
-                status="completed", 
-                progress=1.0,
-                metadata={
-                    "workflow_completed": True,
-                    "final_answer_length": len(final_answer),
-                    "total_execution_steps": len(self.execution_steps)
-                }
-            )
+            self.update_status("completed")
+            self.update_progress(1.0)
             
             self.logger.info(
                 "Agent工作流执行完成",
@@ -578,7 +564,7 @@ class AgentTask(BaseConversationTask):
             self.logger.error(f"处理最终结果失败: {str(e)}")
             await self.emit_error(
                 error_code="FINAL_RESULT_ERROR",
-                error_message=f"处理最终结果失败: {str(e)}"
+                error_message=f"处理最终结果时发生错误: {str(e)}"
             )
     
     def _use_default_task_config(self) -> None:

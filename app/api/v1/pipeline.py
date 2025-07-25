@@ -13,7 +13,7 @@ from datetime import datetime
 
 from ...models import (
     ChatRequest, ChatResponse, APIResponse, Message,
-    ExecutionModeType, StreamResponse, CreateConversationRequest
+    ExecutionMode, StreamResponse, CreateConversationRequest
 )
 from ...core import PipelineInterface
 from ...config import get_logger

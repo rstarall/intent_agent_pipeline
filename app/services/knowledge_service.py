@@ -75,7 +75,7 @@ class KnowledgeService:
             if not url:
                 raise Exception("知识库API URL未配置")
             
-            self.logger.info(f"准备请求知识库API: {url}")
+            # 删除冗余日志
             
             # 发送请求
             session = await self._get_session()
@@ -126,13 +126,7 @@ class KnowledgeService:
                         query=query
                     )
                 
-                self.logger.info(
-                    "知识库搜索完成",
-                    query=query,
-                    result_count=len(search_results),
-                    limit=limit,
-                    has_results_field="results" in result
-                )
+                # 删除冗余日志
                 
                 # 如果没有找到任何结果且响应中没有明确的空结果标识，可能是API问题
                 if len(search_results) == 0 and "results" not in result:
@@ -195,10 +189,7 @@ class KnowledgeService:
                 
                 result = await response.json()
                 
-                self.logger.info(
-                    "获取知识条目成功",
-                    knowledge_id=knowledge_id
-                )
+                # 删除冗余日志
                 
                 return result
                 
@@ -283,12 +274,7 @@ class KnowledgeService:
                         )
                         search_results.append(search_result)
                 
-                self.logger.info(
-                    "分类搜索完成",
-                    category=category,
-                    query=query,
-                    result_count=len(search_results)
-                )
+                # 删除冗余日志
                 
                 return search_results
                 
@@ -329,16 +315,71 @@ class KnowledgeService:
                 result = await response.json()
                 categories = result.get("categories", [])
                 
-                self.logger.info(
-                    "获取分类列表成功",
-                    category_count=len(categories)
-                )
+                # 删除冗余日志
                 
                 return categories
                 
         except Exception as e:
             self.logger.error_with_context(e, {})
             raise
+    
+    async def get_document_content(
+        self,
+        token: str,
+        file_id: str,
+        api_url: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        获取文档的完整内容
+        
+        Args:
+            token: 用户认证token
+            file_id: 文件ID
+            api_url: 可选的API基础URL
+            
+        Returns:
+            Optional[str]: 文档内容，如果失败返回None
+        """
+        try:
+            # 准备请求头
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            # 使用传入的API URL或默认配置
+            base_url = api_url or self.settings.openwebui_base_url
+            
+            # 检查URL是否配置
+            if not base_url:
+                raise Exception("知识库API URL未配置")
+            
+            # 发送请求
+            session = await self._get_session()
+            content_url = f"{base_url.rstrip('/')}/api/v1/files/{file_id}/data/content"
+            
+            # 删除冗余日志
+            
+            async with session.get(content_url, headers=headers) as response:
+                if response.status == 200:
+                    content_data = await response.json()
+                    document_content = content_data.get("content", "")
+                    # 删除冗余日志
+                    return document_content
+                else:
+                    error_text = await response.text()
+                    self.logger.error(f"获取文档内容失败: {response.status}, 响应: {error_text}")
+                    return None
+                    
+        except Exception as e:
+            self.logger.error_with_context(
+                e,
+                {
+                    "file_id": file_id,
+                    "api_url": api_url
+                }
+            )
+            return None
     
     async def get_knowledge_bases(
         self,
@@ -373,7 +414,7 @@ class KnowledgeService:
             session = await self._get_session()
             url = f"{base_url.rstrip('/')}/api/v1/knowledge/"
             
-            self.logger.info(f"准备请求知识库列表API: {url}")
+            # 删除冗余日志
             
             async with session.get(url, headers=headers) as response:
                 
@@ -390,10 +431,7 @@ class KnowledgeService:
                     self.logger.error(f"知识库列表API返回无效的JSON: {response_text}")
                     raise Exception(f"知识库列表API返回无效的JSON响应")
                 
-                self.logger.info(
-                    "获取知识库列表成功",
-                    knowledge_base_count=len(result)
-                )
+                # 删除冗余日志
                 
                 return result
                 
@@ -435,7 +473,7 @@ class KnowledgeService:
             for kb in knowledge_bases:
                 if kb.get('name') == knowledge_base_name:
                     kb_id = kb.get('id')
-                    self.logger.info(f"找到知识库'{knowledge_base_name}'的ID: {kb_id}")
+                    # 删除冗余日志
                     return kb_id
             
             self.logger.warning(f"未找到名称为'{knowledge_base_name}'的知识库")
@@ -513,7 +551,7 @@ class KnowledgeService:
             session = await self._get_session()
             url = f"{base_url.rstrip('/')}/api/v1/retrieval/query/doc"
             
-            self.logger.info(f"准备请求文档查询API: {url}")
+            # 删除冗余日志
             
             async with session.post(
                 url,
@@ -541,13 +579,7 @@ class KnowledgeService:
                     if docs and isinstance(docs[0], list):
                         result_count = len(docs[0])
                 
-                self.logger.info(
-                    "文档查询完成",
-                    collection_name=collection_name,
-                    query=query,
-                    result_count=result_count,
-                    has_documents="documents" in result
-                )
+                # 删除冗余日志
                 
                 # 如果没有文档字段，记录警告
                 if "documents" not in result:
@@ -557,6 +589,47 @@ class KnowledgeService:
                         collection_name=collection_name,
                         query=query
                     )
+                
+                # 获取文档的完整内容
+                if "metadatas" in result and result["metadatas"]:
+                    metadatas = result["metadatas"]
+                    if metadatas and isinstance(metadatas[0], list):
+                        # 创建新的documents列表来存储完整内容
+                        full_documents = []
+                        
+                        for i, metadata in enumerate(metadatas[0]):
+                            if isinstance(metadata, dict) and "file_id" in metadata:
+                                file_id = metadata["file_id"]
+                                
+                                # 获取文档完整内容
+                                full_content = await self.get_document_content(
+                                    token=token,
+                                    file_id=file_id,
+                                    api_url=api_url
+                                )
+                                
+                                if full_content:
+                                    # 将完整内容添加到元数据中
+                                    metadata["full_content"] = full_content
+                                    full_documents.append(full_content)
+                                    # 删除冗余日志
+                                else:
+                                    # 如果获取失败，使用原始片段
+                                    if "documents" in result and result["documents"] and i < len(result["documents"][0]):
+                                        full_documents.append(result["documents"][0][i])
+                                    else:
+                                        full_documents.append("")
+                                    self.logger.warning(f"无法获取文档 {file_id} 的完整内容，使用原始片段")
+                            else:
+                                # 没有file_id，使用原始内容
+                                if "documents" in result and result["documents"] and i < len(result["documents"][0]):
+                                    full_documents.append(result["documents"][0][i])
+                                else:
+                                    full_documents.append("")
+                        
+                        # 将完整内容添加到结果中
+                        result["full_documents"] = [full_documents]
+                        # 删除冗余日志
                 
                 return result
                 
